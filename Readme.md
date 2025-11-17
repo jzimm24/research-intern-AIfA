@@ -1,6 +1,3 @@
-Documentation
+map_creation.py contains the classes map_maker, ...
 
-Documentation of research internship project in the ...
-
-
-blablabla
+ -map_maker: Class creates the gaussian random fields
