@@ -1,10 +1,11 @@
 import numpy as np
-
+import matplotlib.pyplot as plt
 
 class missing_variable_error(Exception):
     """raised when necessary variables are not given"""
     def __init__(self, variable_name: str):
         super().__init__(f"{variable_name} has not been specified. Please provide a value.")
+
 
 class map_maker():
     def __init__(self, map_size: int = None, pixel_size: float = None, pixel_number: int = None, l_degrees: int = None, const: float = 1, index: float = -1):
@@ -27,6 +28,7 @@ class map_maker():
         ## output variables
         self.grf_fs = None
         self.grf = None
+        self.rms = None
 
     def set_map_variables(self, map_size = None, pixel_size = None, pixel_number = None) -> bool:
         if map_size is not None:
@@ -50,7 +52,7 @@ class map_maker():
             self.set_map_variables(map_size, pixel_size, pixel_number)
         x = np.linspace(-0.5*self.map_size, 0.5*self.map_size, int(self.pixel_number))
         y = np.linspace(-0.5*self.map_size, 0.5*self.map_size, int(self.pixel_number))
-        X, Y = np.meshgrid(x, y)
+        X, Y = np.meshgrid(x, y, sparse=True)           ## TODO: check if sparse works correctly
         self.R = np.sqrt(X**2 + Y**2)
         self.R_check = True
         print("map made.")
@@ -154,3 +156,18 @@ class map_maker():
         self.grf_real = np.real(np.fft.ifft2(np.fft.fftshift(self.grf_fs))) 
         
         return self.grf_fs, self.grf, self.grf_real
+    
+    def plot_gaussian_random_field(self) -> None:
+        im = plt.imshow(self.grf_real, origin='lower', interpolation='bilinear', cmap='RdBu')
+        im.set_clim()
+
+        plt.xlabel(r"$\theta_x$[arcmin]")
+        plt.ylabel(r"$\theta_y$[arcmin]")
+
+        cbar = plt.colorbar(im)
+        cbar.set_label("T [K]")   # label for the scale
+        return None
+    
+    def rms_estimation(self) -> float:
+        self.rms = np.sqrt(np.mean(self.grf_real**2))
+        return self.rms
