@@ -1,11 +1,31 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import scipy
+
+import colossus
+
+### TODO: Might be improved if imports take to long
+import colossus.cosmology
+import colossus.cosmology.cosmology as cosmology
+import colossus.halo
+import colossus.halo.mass_so as halo_mass
+import colossus.halo.concentration as halo_concentration
+
+from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
+
+# -----------------------------------------------------------------------------------------------------------------------------------------------------
 
 class missing_variable_error(Exception):
     """raised when necessary variables are not given"""
     def __init__(self, variable_name: str):
         super().__init__(f"{variable_name} has not been specified. Please provide a value.")
 
+class missing_internal_variable_error(Exception):
+    """raised when necessary variables are calculated"""
+    def __init__(self, variable_name: str):
+        super().__init__(f"{variable_name} has not been calculated. Please first calculate {variable_name}.")
+    
+# -----------------------------------------------------------------------------------------------------------------------------------------------------
 
 class map_maker():
     def __init__(self, map_size: int = None, pixel_size: float = None, pixel_number: int = None, l_degrees: int = None, const: float = 1, index: float = -1):
@@ -171,3 +191,133 @@ class map_maker():
     def rms_estimation(self) -> float:
         self.rms = np.sqrt(np.mean(self.grf_real**2))
         return self.rms
+
+# ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+class lens_profile():
+    """ 
+        class is mostly reused/cleaned code from Awais Mirza 2019 at Argelander Institut Bonn
+
+        lens is presumed to be NFW
+    """
+    def __init__(self, cluster_mass = 5e14, cluster_redshift = 0.7, r_max = 10, hubble_constant = 67.74, cosmology = "planck18", omega_m = 0.3089, omega_l = 0.6911, grav_constant = 4.30091 * 10**(-3) / (10**(6)), speed_of_light = scipy.constants.speed_of_light):
+        ## cluster parameters
+        self.M = cluster_mass
+        self.z = cluster_redshift
+        ## physics
+        self.c = speed_of_light
+        self.cosmology = cosmology
+        self.omega_m = omega_m
+        self.omega_l = omega_l
+        self.h_zero = hubble_constant/100 ## automatically scaled
+        ## internal parameters
+        self.hubble_parameter_factor = None
+        self.hubble_parameter = None
+        self.comoving_dist = None
+        self.r_x = None
+        self.c_x = None
+        self.rho_crit = None
+        self.r_s = None
+        self.density_parameter = None
+        ## space variables
+        self.r_max = r_max ## in Mpc
+        self.r_min = 0.1 ## not usually changed
+        self.rSpace
+
+        print("cluster mass " + str(self.M) +"\n"
+                + "cluster redshift z:" + str(self.z) + "\n"
+                + "speed of light:" + str(self.c) + "\n"
+                + "scaled hubble constant:" + str(self.h) + "\n"
+                + "omega_m:" + str(self.omega_m) + "\n"
+                + "omega_l:" + str(self.omega_l) + "\n"
+                + "cosmology" + str(self.cosmology))
+
+    def set_rMax(self, r_max: float) -> None:
+        self.r_max = r_max
+        return None
+
+    def set_rSpace(self, r_min: float = 0.1, r_max: float = None, N: int = 100) -> None:
+        if r_max:
+            self.set_rMax(r_max)
+        self.rSpace = np.linspace(self.r_min, self.r_max, N)
+        return None
+
+    def _calc_hubble_parameter_factor(self, omega_m: float = None, omega_l: float = None, z: float = None) -> float:
+        if omega_m:
+            self.omega_m = omega_m
+            print("omega_m changed to: " + str(omega_m))
+        if omega_l:
+            self.omega_l = omega_l
+            print("omega_l changed to: " + str(omega_l))
+        if z:
+            self.z = z
+            print("redshift z changed to: " + str(z))
+        self.hubble_parameter_factor = 1/np.sqrt((1+self.z) * self.omega_m + (1+self.z)**4 * self.omega_l)
+        #print("Hubble parameter factor is set to: " + str(self.hubble_parameter_factor))
+        return self.hubble_parameter_factor
+
+    def _calc_hubble_parameter(self, h_zero: float = None) -> float:
+        if h_zero:
+            self.h_zero = h_zero
+            print("h_zero changed to: " + str(h_zero))
+        if any([omega_m: float = None, omega_l: float = None, z: float = None]):
+            self._calc_hubble_parameter_factor(omega_m: float = None, omega_l: float = None, z: float = None)
+
+        self.hubble_parameter = np.sqrt(self.h_zero**2 * self.hubble_parameter_factor)
+        print("hubble parameter = " + str(self.hubble_parameter))
+        return self.hubble_parameter
+
+    def _calc_comoving_dist(self, c: float = None, h_zero: float = None, omega_m: float = None, omega_l: float = None, z: float = None) -> float:
+        if h_zero:
+            self.h_zero = h_zero
+            print("h_zero changed to: " + str(h_zero))
+        if c:
+            self.c = c
+            print("speed of light c changed to: " + str(c))
+        if any([omega_m: float = None, omega_l: float = None, z: float = None]):
+            self._calc_hubble_parameter_factor(omega_m: float = None, omega_l: float = None, z: float = None)
+        
+        self.comoving_dist = (self.c * self.h_zero) * integrate.quad(self.hubble_parameter, np.power(1+self.z, -1), 1, args = (self.omega_m, self.omega_l))[0]
+        print("comoving_dist = " + str(self.comoving_dist))
+    return self.comoving_dist
+
+    def _calc_r_x(self, option_flag: str = "200c") -> float:
+    """
+
+    """
+    self.r_x = halo_mass.M_to_R(self.M, self.z, option_flag) * self.hubble_parameter /10**3 #!!!!!!!!!!!!!11Using self.hubble_parameter instead of self.h_zero. Is that correct???
+    print("r_x = " + str(self.r_x))
+    return self.r_x
+
+    def _calc_c_x(self, option_flag: str = "200c", model_flag: str = "diemer15") -> float:
+        self.c_x = halo_concentration.concentration(self.M, option_flag, self.z, model = model_flag)
+        print("c_x = " + str(self.c_x))
+        return self.c_x
+
+    def _calc_rho_crit(self) -> float:
+        if not self.hubble_parameter:
+            raise missing_internal_variable_error("hubble_parameter")
+        self.rho_crit = (3 * self.hubble_parameter**2) / (8 * np.pi * self.G)
+    return self.rho_crit
+
+    def _calc_density_parameter(self) -> float:
+        self._calc_c_x()
+        self.density_parameter = (200/3) * self._calc_rho_crit() * np.power(self.c_x, 3) / (np.log(1+self.c_x) - self.c_x/(1 - self.c_x))
+    return self.density_parameter
+
+    def _calc_scale_radius(self) -> float:
+        self.r_s = self.r_x/self.c_x
+        return self.r_s
+
+    def rho_lens(r, M_200, z):
+    """ 
+        NFW Density profile in ((M_(solar))/(Mpc**(-3)))
+        Input:  - r: float =        
+                - M_200: float =    
+                - z: float =        
+        Return: 
+    """
+    return self.density_parameter / ((self.rSpace/self.r_s)*(1 + (self.rSpace/self.r_s))**2)
+
+    def M_NFW(r, m, z) -> float:
+    return  4 * np.pi * density_parameter(self.M, self.z) * np.power(self.r_s, 3) * (np.log((self.r_s + self.rSpace)/self.r_s) - (r/(self.r_s + self.rSpace)))
