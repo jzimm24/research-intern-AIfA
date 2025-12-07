@@ -228,14 +228,18 @@ class lens_profile():
         self.f = None
         self.v_max = None
         ## space variables
-        self.r_max = r_max ## in Mpc
-        self.r_min = 0.1 ## not usually changed
+        #self.r_max = r_max ## in Mpc
+        #self.r_min = 0.1 ## not usually changed
         self.rSpace = None
+
+        self.n = 100
 
         self.pos_map = None
         ## output
         self.M_nfw = None
         self.rhoLens = None
+        self.v_max = None
+        self.d_theta = None
 
         print("cluster mass " + str(self.M) +"\n"
                 + "cluster redshift z: " + str(self.z) + "\n"
@@ -247,10 +251,12 @@ class lens_profile():
 
         print("############################################")
         
-        self.set_rSpace()
         self._calc_hubble_parameter_factor()
 
-        self.set_angle_map(3, 100)
+        self.set_angle_map(3, self.n)
+
+        self._calc_comoving_dist()
+        self.set_rSpace()
 
         cosmo.setCosmology(self.cosmology)
         print("Cosmology set as " + self.cosmology)
@@ -264,14 +270,41 @@ class lens_profile():
         self.r_min = r_min
         return None
 
-    def set_rSpace(self, r_min: float = 0.1, r_max: float = None, N: int = 100) -> None:
-        if r_max:
-            self.set_rMax(r_max)
-        if r_min:
-            self.set_rMin(r_min)
-        self.rSpace = np.linspace(self.r_min, self.r_max, N)
-        print("rSpace set!")
+    def set_angle_map(self, theta_max: float, n: int):
+        """       
+            so far exclusively squared maps centered at zero
+        """
+        self.n = n
+
+        dec = np.linspace(-theta_max, theta_max, n)
+        asc = np.linspace(theta_max, -theta_max, n)
+
+        pos_map = np.meshgrid(dec, asc)
+        self.pos_map = np.array(pos_map)
+        print('pos map set!')
+        return self.pos_map
+
+    def set_rSpace(self) -> None:  ### naming dist_map
+        dx = np.tan(np.max(self.pos_map[0])-np.min(self.pos_map[0])/self.pos_map.shape[1]) * self.comoving_dist
+        dy = dx = np.tan(np.max(self.pos_map[1])-np.min(self.pos_map[1])/self.pos_map.shape[2]) * self.comoving_dist
+
+        n = self.n
+        x = np.linspace(-n/2, n/2, n) * dx
+        y = np.linspace(-n/2, n/2, n) * dy
+
+        X, Y = np.meshgrid(x, y)
+
+        self.rSpace = np.sqrt(X**2 + Y**2)
         return None
+
+    # def set_rSpace(self, r_min: float = 0.1, r_max: float = None, N: int = 100) -> None:
+    #     if r_max:
+    #         self.set_rMax(r_max)
+    #     if r_min:
+    #         self.set_rMin(r_min)
+    #     self.rSpace = np.linspace(self.r_min, self.r_max, N)
+    #     print("rSpace set!")
+    #     return None
 
     def _calc_hubble_parameter_factor(self, omega_m: float = None, omega_l: float = None, z: float = None) -> float:
         if omega_m:
@@ -317,7 +350,7 @@ class lens_profile():
             self.M = m
         if any([z]):
             self.z = z
-        if any([h_zero, omega_m, omega_l, z]):
+        if any([h_zero, omega_m, omega_l, z]) or not self.hubble_parameter:
             self._calc_hubble_parameter(h_zero, omega_m, omega_l, z)
         self.r_x = halo_mass.M_to_R(self.M, self.z, option_flag) * self.hubble_parameter /10**3 #!!!!!!!!!!!!!11Using self.hubble_parameter instead of self.h_zero. Is that correct???
         print("r_x = " + str(self.r_x))
@@ -330,7 +363,7 @@ class lens_profile():
             self.z = z
         self.c_x = halo_concentration.concentration(self.M, option_flag, self.z, model = model_flag)
         print("c_x = " + str(self.c_x))
-        return self.c_x
+        return self.c_x  
 
     def _calc_rho_crit(self, h_zero: float = None, omega_m: float = None, omega_l: float = None, z: float = None) -> float:
         if not self.hubble_parameter:
@@ -348,8 +381,8 @@ class lens_profile():
             self._calc_c_x(option_flag, model_flag, m, z)
         if any([h_zero, omega_m, omega_l, z]) or not self.rho_crit:
             self._calc_rho_crit(h_zero, omega_m, omega_l, z)
-        if not self.rho_crit:
-            raise missing_internal_variable_error("rho_crit")
+        if not self.hubble_parameter:
+            raise missing_internal_variable_error("hubble_parameter")
             #self._calc_rho_crit()
         self.density_parameter = (200/3) * self.rho_crit * np.power(self.c_x, 3) / (np.log(1+self.c_x) - self.c_x/(1 - self.c_x))
         print("density_parameter: " + str(self.density_parameter))
@@ -462,7 +495,7 @@ class lens_profile():
         print("v_max calculated!")
         return self.v_max
 
-    def d_theta(self, r_min: float = None, r_max: float = None, N: int = None, c: float = None, h_zero: float = None, omega_m: float = None, omega_l: float = None, z: float = None, m: float = None, option_flag: str = "200c", model_flag: str = "diemer15", angles: list[list[float]] = None) -> None:
+    def delta_theta(self, r_min: float = None, r_max: float = None, N: int = None, c: float = None, h_zero: float = None, omega_m: float = None, omega_l: float = None, z: float = None, m: float = None, option_flag: str = "200c", model_flag: str = "diemer15", angles: list[list[float]] = None) -> None:
         new_option_flag = bool("200c" != option_flag)
         new_model_flag = bool("diemer15" != model_flag)
         if any([r_min, r_max, N]):
