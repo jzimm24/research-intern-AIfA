@@ -78,14 +78,20 @@ class map_maker():
         X, Y = np.meshgrid(x, y, sparse=True)           ## TODO: check if sparse works correctly
         self.R = np.sqrt(X**2 + Y**2)
         self.R_check = True
-        print("map made.")
+        print("coordinates map made.")
 
         return None
     
     def _compute_fourierSpace_scaler(self) -> float:
         if self.pixel_size is None:
             raise missing_variable_error("pixel_size")
-        fs_scale_factor = np.pi/(self.pixel_size * np.pi/180)
+        
+        #fs_scale_factor = np.pi/(self.pixel_size * np.pi/180)
+        
+        fs_scale_factor = (np.pi/180)*(self.pixel_size/60)
+        print("########################################")
+        print(fs_scale_factor)
+        
         self.fs_scale_factor = fs_scale_factor
         return fs_scale_factor
     
@@ -146,7 +152,11 @@ class map_maker():
             self._R_fourierSpace_mapping()
 
         spectrum_map_complete = np.zeros(int(self.R_fs.max())+1)
-        spectrum_map_complete[0:self.spectrum.size] = self.spectrum
+        print("äääääääääääääääääääääääääääääääääääääääää")
+        print(self.spectrum.size)
+        
+        #spectrum_map_complete[0:self.spectrum.size] = self.spectrum
+        spectrum_map_complete = self.spectrum
 
         if self.R_fs is None:
             raise missing_variable_error("R_fs")
