@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import scipy
 
 class lensing():
-    def __init__(self, map_size: float = None, pixel_size: float = None, pixel_number: int = None, dec_shift = 0, asc_shift = 0, pre_lens_map: list[list[float]] = None, poly_degree = 2):
+    def __init__(self, map_size: float = None, pixel_size: float = None, pixel_number: int = None, dec_shift = 0, asc_shift = 0, lens: list[list[float]] = None, pre_lens_map: list[list[float]] = None, poly_degree = 2):
         self.map_size = map_size
         self.pixel_size = pixel_size
         self.pixel_number = pixel_number
@@ -14,7 +14,7 @@ class lensing():
         ## internal vatiables
         self.pos_map = None
         self.pos_map_fs = None
-        self.lensing_map = None
+        self.lensing_map = lens
         ## output
         self.post_lensing_map = None
 
@@ -42,6 +42,10 @@ class lensing():
             return True
     
     def make_lensing_map():
+        return None
+    
+    def set_lensing_map(self, map) -> list[list[float]]:
+        self.lensing_map = map
         return None
     
     def set_pre_lens_map(self, map: list[list[float]]) -> None:
@@ -81,24 +85,27 @@ class lensing():
         self.pos_map_fs = np.meshgrid(x, y)
         return None
     
-    def _make_pos_map_test(self, shift_dec = 0, shift_asc = 0) -> None:
-        # real_space
-        dec, asc = np.linspace(-self.map_size/2, self.map_size/2, self.pixel_number), np.linspace(-self.map_size/2, self.map_size/2, self.pixel_number)
-        pos_map = np.meshgrid(dec, asc)
-        ## Necessary because tuples can only be read (not modified)
-        pos_map_obj_1, pos_map_obj_2 = pos_map 
-        pos_map_obj_1 += shift_dec
-        pos_map_obj_2 += shift_asc
-        self.pos_map =  pos_map_obj_1, pos_map_obj_2
+    # def _make_pos_map_test(self, shift_dec = 0, shift_asc = 0) -> None:
+    #     # real_space
+    #     dec, asc = np.linspace(-self.map_size/2, self.map_size/2, self.pixel_number), np.linspace(-self.map_size/2, self.map_size/2, self.pixel_number)
+    #     pos_map = np.meshgrid(dec, asc)
+    #     ## Necessary because tuples can only be read (not modified)
+    #     pos_map_obj_1, pos_map_obj_2 = pos_map 
+    #     pos_map_obj_1 += shift_dec
+    #     pos_map_obj_2 += shift_asc
+    #     self.pos_map =  pos_map_obj_1, pos_map_obj_2
 
-        # fourier_space
-        self.pos_map_fs = np.fft.fft2(self.pos_map)
+    #     # fourier_space
+    #     self.pos_map_fs = np.fft.fft2(self.pos_map)
 
-        return None
+    #     return None
     
-    def apply_lensing(self, pre_lens_map = None, shift_dec = 0, shift_asc = 0):
+    def apply_lensing(self, pre_lens_map: list[list[float]]= None, lens: list[list[float]] = None, shift_dec = 0, shift_asc = 0):
         if pre_lens_map:
             self.pre_lens_map = pre_lens_map
+
+        if lens:
+            self.lensing_map = lens
 
         self._make_pos_map(shift_dec, shift_asc)
         dec_pos, asc_pos = self.pos_map
