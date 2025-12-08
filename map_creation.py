@@ -270,14 +270,14 @@ class lens_profile():
         self.r_min = r_min
         return None
 
-    def set_angle_map(self, theta_max: float, n: int):
+    def set_angle_map(self, theta_max: float, n: float):
         """       
             so far exclusively squared maps centered at zero
         """
-        self.n = n
+        self.n = int(n)
 
-        dec = np.linspace(-theta_max, theta_max, n)
-        asc = np.linspace(theta_max, -theta_max, n)
+        dec = np.linspace(-theta_max, theta_max, int(n))
+        asc = np.linspace(theta_max, -theta_max, int(n))
 
         pos_map = np.meshgrid(dec, asc)
         self.pos_map = np.array(pos_map)
@@ -508,7 +508,6 @@ class lens_profile():
             self._calc_f(angles, c, h_zero, omega_m, omega_l, z, option_flag, model_flag, m)
 
         theta = self.rSpace/self.comoving_dist
-        print("theta: " + str(theta))                                           ## what map should one take
         #d_theta = 0.54 * (self.v_max)**2 * (self.comoving_dist - self._calc_comoving_dist(z=1100.0)) * (self._calc_f(angles=theta) / self._calc_comoving_dist(z = 1100.0))
         self.d_theta = 0.54 * (self.v_max)**2 * (self.comoving_dist - self._calc_comoving_dist(z=1100.0)) * (self.f / self._calc_comoving_dist(z = 1100.0))
         print("angular displacement calculated!")
