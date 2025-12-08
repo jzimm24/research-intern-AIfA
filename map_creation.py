@@ -58,12 +58,15 @@ class map_maker():
         if pixel_number is not None:
             self.pixel_number = pixel_number
         else:
-            self.pixel_number = self.map_size*(60/self.pixel_size)
+            self.pixel_number = self.map_size*(self.pixel_size)
         if not all((self.map_size, self.pixel_size, self.pixel_number)):
             print("!!!!!!!!!!!There are still missing map_variables.")
             return False
         else:
             print("Full set of map variables defined.")
+            print("Map Size: " + str(self.map_size) + "\n"
+                  + "Pixel Size: " + str(self.pixel_size) + "\n"
+                  + "Number of Pixel: " + str(self.pixel_number))
             return True
 
     def make_map_coordinates(self, map_size = None, pixel_size = None, pixel_number = None):
@@ -82,7 +85,7 @@ class map_maker():
     def _compute_fourierSpace_scaler(self) -> float:
         if self.pixel_size is None:
             raise missing_variable_error("pixel_size")
-        fs_scale_factor = np.pi/(self.pixel_size/60 * np.pi/180)
+        fs_scale_factor = np.pi/(self.pixel_size * np.pi/180)
         self.fs_scale_factor = fs_scale_factor
         return fs_scale_factor
     
@@ -127,7 +130,7 @@ class map_maker():
         """
         return None
     
-    def make_spectrum_map(self, spectrum_path: str = None, const: float = None, l_degrees: int = None, index: float = None) -> None:
+    def _make_spectrum_map(self, spectrum_path: str = None, const: float = None, l_degrees: int = None, index: float = None) -> None:
         """ 
             Creates a map of the spectrum (Inside Fourier Space) as well as a cut version leaving out areas of null values.
             TODO: add option to intervene in scale
@@ -166,7 +169,8 @@ class map_maker():
             self.make_map_coordinates()
         if not self.R_fs_check:  
             self._R_fourierSpace_mapping()
-        self.make_spectrum_map()
+        
+        self._make_spectrum_map()
         self._make_random_noise()
 
         self.grf_fs = self.spectrum_map_confined*self.random_noise_2d_fs              ## gaussian-random-field in Fourier-Space
@@ -205,7 +209,7 @@ class lens_profile():
 
     def __init__(self, cluster_mass = 5e14, cluster_redshift = 0.7, r_max = 10, hubble_constant = 67.74, cosmology = "planck18", omega_m = 0.3089, omega_l = 0.6911, grav_constant = 4.30091 * 10**(-3) / (10**(6)), speed_of_light = scipy.constants.speed_of_light):
         ## cluster parameters
-        self.M = cluster_mass
+        self.M = cluster_mass  ## in M_sun
         self.z = cluster_redshift
         ## physics
         self.c = speed_of_light
