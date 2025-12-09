@@ -24,11 +24,16 @@ class missing_internal_variable_error(Exception):
     """raised when necessary variables are calculated"""
     def __init__(self, variable_name: str):
         super().__init__(f"{variable_name} has not been calculated. Please first calculate {variable_name}.")
+
+class missing_spectrum_type_error(Exception):
+    """raised when spectrum type is not given"""
+    def __init__(self):
+        super().__init__(f"Spectrum type has not been specified. Please provide a type.")
     
 # -----------------------------------------------------------------------------------------------------------------------------------------------------
 
 class map_maker():
-    def __init__(self, map_size: int = None, pixel_size: float = None, pixel_number: int = None, l_degrees: int = None, const: float = 1, index: float = -1):
+    def __init__(self, map_size: int = None, pixel_size: float = None, pixel_number: int = None, l_degrees: int = None, const: float = 1, index: float = -1, spectrum_type: str = "power law"):
         ## external variables
         self.map_size = map_size
         self.pixel_size = pixel_size
@@ -36,12 +41,26 @@ class map_maker():
         self.l_degrees = l_degrees
         self.const = const
         self.index = index
+        self.spectrum_type = spectrum_type
         ## internal variables
         self.spectrum = None                       # unless loaded in
+
+        self.X = None
+        self.Y = None
+        self.X_fs = None
+        self.Y_fs = None
+
+        self.X_scaled = None
+        self.Y_scaled = None
+        self.X_fs_scaled = None
+        self.Y_fs_scaled = None
+
         self.R = None
+        self.R_scaled = None
         self.R_check = False
         self.fs_scale_factor = None
         self.R_fs = None
+        self.R_fs_scaled = None
         self.R_fs_check = False
         self.random_noise_2d = None
         self.random_noise_2d_fs = None
@@ -58,7 +77,7 @@ class map_maker():
         if pixel_number is not None:
             self.pixel_number = pixel_number
         else:
-            self.pixel_number = self.map_size*(self.pixel_size)
+            self.pixel_number = self.map_size/(self.pixel_size)
         if not all((self.map_size, self.pixel_size, self.pixel_number)):
             print("!!!!!!!!!!!There are still missing map_variables.")
             return False
@@ -78,20 +97,46 @@ class map_maker():
         X, Y = np.meshgrid(x, y, sparse=True)           ## TODO: check if sparse works correctly
         self.R = np.sqrt(X**2 + Y**2)
         self.R_check = True
-        print("coordinates map made.")
+        print("coordinates made.")
+        self.X = X
+        self.Y = Y
 
         return None
+    
+    def make_fourier_map_coordinates(self) -> None:
+        self._compute_fourierSpace_scaler()
+        #pixel_size_fs = (np.pi/180)*(self.pixel_size/60.)
+        #x_fs = 2*np.pi(np.fft.fftfreq(self.pixel_number, pixel_size_fs))
+        #y_fs = 2*np.pi(np.fft.fftfreq(self.pixel_number, pixel_size_fs))
+        pixel_size_fs = 2*np.pi*self.fs_scale_factor
+        x_fs = 2*np.pi(np.fft.fftfreq(self.pixel_number, pixel_size_fs))
+        y_fs = 2*np.pi(np.fft.fftfreq(self.pixel_number, pixel_size_fs))
+        #x_fs_min, x_fs_max = min(x_fs), max(x_fs)
+        #y_fs_min, y_fs_max = min(y_fs), max(y_fs)
+        X_fs, Y_fs = np.meshgrid(x_fs, y_fs)
+        self.X_fs, self.Y_fs = X_fs, Y_fs
+        return None
+    
+    def normalize_coordinates(self, X: list[float] = None, Y: list[float] = None, Fourier=False) -> None:
+        
+        if Fourier:
+            self.X_fs_scaled = self.X/(max(self.X)-min(self.X))
+            self.Y_fs_scaled = self.Y/(max(self.Y)-min(self.Y))
+            self.R_fs_scaled = np.sqrt(self.X_fs_scaled**2 + self.Y_fs_scaled**2)
+        else:
+            self.X_scaled = self.X/(max(self.X[0])-min(self.X[0]))
+            self.Y_scaled = self.Y/(max(self.Y)-min(self.Y))
+            
+            self.R_scaled = np.sqrt(self.X_scaled**2 + self.Y_scaled**2)
+        print("Normalized Coordinates set.")
+        return None
+
     
     def _compute_fourierSpace_scaler(self) -> float:
         if self.pixel_size is None:
             raise missing_variable_error("pixel_size")
-        
-        #fs_scale_factor = np.pi/(self.pixel_size * np.pi/180)
-        
-        fs_scale_factor = (np.pi/180)*(self.pixel_size/60)
-        print("########################################")
-        print(fs_scale_factor)
-        
+        fs_scale_factor = (self.pixel_size/60 * np.pi/180)
+        #fs_scale_factor = 2*np.pi*(self.pixel_size/60) * (np.pi/180)            ## TODO: Check if aarcmin/arcsec conversion is correct here
         self.fs_scale_factor = fs_scale_factor
         return fs_scale_factor
     
@@ -118,13 +163,25 @@ class map_maker():
             print("Full set of variables for the spectrum (power-law) defined.")
             return True
 
-    def make_spectrum(self, const: float = None, l_degrees: int = None, index: float = None) -> None:
+    def make_spectrum(self, const: float = None, l_degrees: int = None, index: float = None, zero_dipole=False, spectrum_type: str = None,) -> None:
             
         self.set_spectrum_variables(const, l_degrees, index)
-        l = np.arange(self.l_degrees, dtype=float)
-
-        spectrum=self.const*(l**self.index)
+        l = np.arange(2, self.l_degrees, dtype=float)
+        if spectrum_type:
+            self.spectrum_type = spectrum_type
+        if self.spectrum_type == "power law":
+            spectrum=self.const*(l**self.index)
+        if self.spectrum_type == "acoustic":
+            print("Used Spectrum type acoustic.")
+            Dl = 6000 * (l / 200.)**(-1) * (1 + 0.5 * np.sin(l / 200. - 2) * np.exp(-(l - 200)**2 / 50000))
+            spectrum = Dl * 2 * np.pi / (l * ( + 1.))
+        else:
+            raise missing_spectrum_type_error()
         spectrum[0] = 0
+        if zero_dipole:
+            spectrum[1] = 0
+            spectrum[2] = 0
+            spectrum[3] = 0
         self.spectrum = spectrum
 
         return None
@@ -136,32 +193,28 @@ class map_maker():
         """
         return None
     
-    def _make_spectrum_map(self, spectrum_path: str = None, const: float = None, l_degrees: int = None, index: float = None) -> None:
+    def make_spectrum_map(self, spectrum_path: str = None, const: float = None, l_degrees: int = None, index: float = None, zero_dipole = False, spectrum_type = "power law") -> None:
         """ 
             Creates a map of the spectrum (Inside Fourier Space) as well as a cut version leaving out areas of null values.
             TODO: add option to intervene in scale
 
         """
-
+        self.normalize_coordinates()
         if spectrum_path is not None:
             self.load_spectrum(self, spectrum_path)
         elif any((const, l_degrees, index)) or self.spectrum is None:
-            self.make_spectrum(const, l_degrees, index)
+            self.make_spectrum(const, l_degrees, index, zero_dipole, spectrum_type)
 
-        if self.R_fs is None:
-            self._R_fourierSpace_mapping()
+        multipole_field = self.R_scaled * np.pi / self.fs_scale_factor
 
-        spectrum_map_complete = np.zeros(int(self.R_fs.max())+1)
-        print("äääääääääääääääääääääääääääääääääääääääää")
-        print(self.spectrum.size)
-        
-        #spectrum_map_complete[0:self.spectrum.size] = self.spectrum
-        spectrum_map_complete = self.spectrum
+        spectrum_map_complete = np.zeros(int(multipole_field.max())+1)
+        print(spectrum_map_complete.size)
+        spectrum_map_complete[0:self.spectrum.size] = self.spectrum
 
-        if self.R_fs is None:
-            raise missing_variable_error("R_fs")
+        # if self.R_fs is None:
+        #     raise missing_variable_error("R_fs")
 
-        spectrum_map_confined = spectrum_map_complete[(self.R_fs).astype(int)]
+        spectrum_map_confined = spectrum_map_complete[multipole_field.astype(int)]
         self.spectrum_map_complete = spectrum_map_complete
         self.spectrum_map_confined = spectrum_map_confined
         return None
@@ -173,21 +226,20 @@ class map_maker():
         self.random_noise_2d_fs = np.fft.fft2(self.random_noise_2d)
         return None
 
-    def make_gaussian_random_field(self) -> list[float]:
+    def make_gaussian_random_field(self, zero_dipole = False, spectrum_type: str = "power law") -> list[float]:
         
         if not self.R_check:
             self.make_map_coordinates()
         if not self.R_fs_check:  
             self._R_fourierSpace_mapping()
-        
-        self._make_spectrum_map()
+        self.make_spectrum_map(zero_dipole=zero_dipole, spectrum_type=spectrum_type)
         self._make_random_noise()
 
-        self.grf_fs = self.spectrum_map_confined*self.random_noise_2d_fs              ## gaussian-random-field in Fourier-Space
+        self.grf_fs = np.sqrt(self.spectrum_map_confined)*self.random_noise_2d_fs              ## gaussian-random-field in Fourier-Space
 
-        self.grf = np.fft.ifft2(np.fft.fftshift(self.grf_fs))           ## gaussian-random-field after inverse fft2
+        self.grf = np.fft.ifft2(np.fft.fftshift(self.grf_fs)) / self.fs_scale_factor      ## gaussian-random-field after inverse fft2
 
-        self.grf_real = np.real(np.fft.ifft2(np.fft.fftshift(self.grf_fs))) 
+        self.grf_real = np.real(np.fft.ifft2(np.fft.fftshift(self.grf_fs))) / self.fs_scale_factor
         
         return self.grf_fs, self.grf, self.grf_real
     
