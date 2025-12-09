@@ -174,15 +174,15 @@ class map_maker():
         if self.spectrum_type == "acoustic":
             print("Used Spectrum type acoustic.")
             Dl = 6000 * (l / 200.)**(-1) * (1 + 0.5 * np.sin(l / 200. - 2) * np.exp(-(l - 200)**2 / 50000))
-            spectrum = Dl * 2 * np.pi / (l * ( + 1.))
+            spectrum = Dl * 2 * np.pi / (l * (l + 1.))
+            print("Dl: " + str(np.max(Dl)))
         else:
             raise missing_spectrum_type_error()
         spectrum[0] = 0
         if zero_dipole:
             spectrum[1] = 0
-            spectrum[2] = 0
-            spectrum[3] = 0
         self.spectrum = spectrum
+        print("spectrum: " + str(np.max(spectrum)))
 
         return None
     
@@ -208,13 +208,13 @@ class map_maker():
         multipole_field = self.R_scaled * np.pi / self.fs_scale_factor
 
         spectrum_map_complete = np.zeros(int(multipole_field.max())+1)
-        print(spectrum_map_complete.size)
         spectrum_map_complete[0:self.spectrum.size] = self.spectrum
 
         # if self.R_fs is None:
         #     raise missing_variable_error("R_fs")
 
         spectrum_map_confined = spectrum_map_complete[multipole_field.astype(int)]
+        print(np.max(spectrum_map_confined))
         self.spectrum_map_complete = spectrum_map_complete
         self.spectrum_map_confined = spectrum_map_confined
         return None
@@ -237,14 +237,17 @@ class map_maker():
 
         self.grf_fs = np.sqrt(self.spectrum_map_confined)*self.random_noise_2d_fs              ## gaussian-random-field in Fourier-Space
 
+        print(np.max(self.grf_fs))
+
         self.grf = np.fft.ifft2(np.fft.fftshift(self.grf_fs)) / self.fs_scale_factor      ## gaussian-random-field after inverse fft2
 
-        self.grf_real = np.real(np.fft.ifft2(np.fft.fftshift(self.grf_fs))) / self.fs_scale_factor
+        #self.grf_real = np.real(np.fft.ifft2(np.fft.fftshift(self.grf_fs))) / self.fs_scale_factor
+        self.grf_real = np.real(np.fft.ifft2(np.fft.ifftshift(self.grf_fs))) / self.fs_scale_factor
         
         return self.grf_fs, self.grf, self.grf_real
     
     def plot_gaussian_random_field(self) -> None:
-        im = plt.imshow(self.grf_real, origin='lower', interpolation='bilinear', cmap='RdBu')
+        im = plt.imshow(self.grf_real, extent = [0, self.pixel_number*self.pixel_size, 0, self.pixel_number*self.pixel_size], origin='lower', interpolation='bilinear', cmap='RdBu')
         im.set_clim()
 
         plt.xlabel(r"$\theta_x$[arcmin]")
@@ -267,7 +270,6 @@ class lens_profile():
         lens is presumed to be NFW
     """
 
-    ## TODO: Decide on wether positions should be in angular position (2d) or in radial distance from the center (radial symmetry)
 
     def __init__(self, cluster_mass = 5e14, cluster_redshift = 0.7, r_max = 10, hubble_constant = 67.74, cosmology = "planck18", omega_m = 0.3089, omega_l = 0.6911, grav_constant = 4.30091 * 10**(-3) / (10**(6)), speed_of_light = scipy.constants.speed_of_light):
         ## cluster parameters
