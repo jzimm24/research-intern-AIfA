@@ -11,6 +11,11 @@ import colossus.halo
 import colossus.halo.mass_so as halo_mass
 import colossus.halo.concentration as halo_concentration
 
+from astropy import constants as const
+from astropy import units as u
+from astropy import coordinates as coord
+from astropy.cosmology import FlatLambdaCDM
+
 from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -263,6 +268,221 @@ class map_maker():
 
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+class nfw_lens():
+    def __init__(self, cluster_mass: float = 5e14, cluster_redshift: float = 0.7, map_size: float = None, pixel_size: float = None, rho_type: str = "crit", cosmology = None, grav_constant = 4.30091 * 10**(-3) / (10**(6)), speed_of_light = scipy.constants.speed_of_light, delta = 200, z_source = 1100):
+        ## cluster parameters
+        self.M = cluster_mass * u.Msun
+        self.z = cluster_redshift
+        ## physics
+        self.z_source = z_source
+        self.c = speed_of_light
+        self.G = grav_constant
+
+        self.cosmology = cosmology
+        self.delta = delta
+        ## external variables
+        self.map_size = map_size
+        self.pixel_size = pixel_size
+        self.pixel_number = None
+
+        self.rho_type = rho_type
+        ## internal variables
+        self.map = None
+        self.X_arcmin = None
+        self.Y_arcmin = None
+        self.X_deg = None
+        self.Y_deg = None
+
+        self.cluster_coords = coord.SkyCoord(ra=0 * u.degree, dec=0 * u.degree)
+
+        self.theta = None
+        self.rho_c_z = None
+        self.r_v = None
+        self.concentration = None
+        self.nfwConcentration = None
+
+        self.r_s = None
+
+        self.D_l = None
+        self.D_s = None
+        self.D_ls = None
+
+        self.sigma_c = None
+
+        self.physical_r = None
+        self.physical_r_scaled = None
+        self.physical_r_scaledMin = 1e-4
+        self.center_sing_extension = None
+
+        self.lX = None
+        self.lY = None
+        self.l2d = None
+
+        ## output
+        self.proj = None
+        self.sigma = None
+        self.Kappa = None
+
+        self.alphaX = None
+        self.alphaY = None
+        self.alphaX_fft = None
+        self.alphaY_fft = None
+
+        return None
+        
+
+    def make_map(self, map_size: float = None, pixel_size: float = None):
+        if map_size:
+            self.map_size = map_size
+        if pixel_size:
+            self.pixel_size = pixel_size
+        self.pixel_number = int(self.map_size/self.pixel_size)
+        x, y = np.linspace(-self.map_size/2, self.map_size/2, self.pixel_number), np.linspace(-self.map_size/2, self.map_size/2, self.pixel_number)
+        # arcmin grid
+        self.X_arcmin, self.Y_arcmin = np.meshgrid(x, y)
+        # degree grid
+        self.X_deg, self.Y_deg = self.X_arcmin/60, self.Y_arcmin/60
+        self.map = coord.SkyCoord(ra=self.X_deg * u.degree, 
+                               dec=self.Y_deg * u.degree)
+        
+        return None
+    
+    def _calc_angular_seperation(self) -> None:
+        #self.theta = self.map.separation(coord.SkyCoord(self.cluster_coords).value * (np.pi / 180.))
+        center = coord.SkyCoord(self.cluster_coords, unit='deg')
+        self.theta = self.map.separation(center)
+        return None
+    
+    def _calc_ref_density(self, rho_type: str = None) -> None:
+        if rho_type:
+            self.rho_type = rho_type
+        if self.rho_type == 'crit':
+            rho_c_z = self.cosmology.critical_density(self.z)
+        elif self.rho_type == 'mean':
+            rho_c_z = self.cosmology.critical_density(self.z) * self.cosmology.critical_density(self.z)
+        else:
+            raise ValueError("rho_def must be 'crit' or 'mean'")
+        
+        self.rho_c_z = rho_c_z.to('M_sun/Mpc3')
+        return None
+    
+    def _calc_virial_r(self) -> None:
+        
+        # Calculate r_Δ from M_Δ = (4π/3) * Δ * ρ * r_Δ³
+        self.r_v = ((self.M / (self.delta * 4. * np.pi / 3.) / self.rho_c_z)**(1./3.)).to('Mpc')
+        
+        return None
+    
+    def _calc_concentration(self) -> None:
+        self.concentration = halo_concentration.concentration(self.M.value, '%s%s' % (self.delta, self.rho_type[0]), self.z)
+        return None
+
+    def _calc_nfwConcentration(self) -> None:
+        self.nfwConcentration = (self.delta / 3.) * (self.concentration**3.) / (np.log(1. + self.concentration) - self.concentration / (1. + self.concentration))
+        return None
+    
+    def _calc_nfwScaleRadius(self) -> None:
+        self.r_s = self.r_v.to('Mpc') / self.concentration
+        return None
+    
+    def _calc_lensing_distances(self) -> None:
+        self.D_l = self.cosmology.comoving_distance(self.z) / (1. + self.z)  # Lens distance
+        self.D_s = self.cosmology.comoving_distance(self.z_source) / (1. + self.z_source)  # Source distance
+        self.D_ls = (self.cosmology.comoving_distance(self.z_source) - self.cosmology.comoving_distance(self.z)) / (1. + self.z_source)
+        return None
+    
+    def _calc_crit_surface_density(self) -> None:
+        self.sigma_c = (((const.c.cgs**2.) / (4. * np.pi * const.G.cgs)) * 
+               (self.D_s / (self.D_l * self.D_ls))).to('M_sun/Mpc2')
+        return None
+    
+    def _calc_pyhsical_dist(self) -> None:
+        physical_r = self.D_l * self.theta  # Physical radius in Mpc
+        self.physical_r = physical_r * u.Mpc
+        physical_r_scaled = self.physical_r / self.r_s  # Dimensionless radius
+        self.physical_r_scaled = physical_r_scaled.decompose().value     
+        return None
+    
+    def _calc_nfwProfile(self) -> None:
+        proj = np.zeros(self.physical_r_scaled.shape)
+        proj[np.where(self.physical_r_scaled > 1.0)] = (1. / (self.physical_r_scaled[np.where(self.physical_r_scaled > 1.0)]**2. - 1)) * \
+                      (1. - (2. / np.sqrt(self.physical_r_scaled[np.where(self.physical_r_scaled > 1.0)]**2. - 1.)) * 
+                       np.arctan(np.sqrt((self.physical_r_scaled[np.where(self.physical_r_scaled > 1.0)] - 1.) / (self.physical_r_scaled[np.where(self.physical_r_scaled > 1.0)] + 1.))))
+        proj[np.where((self.physical_r_scaled >= self.physical_r_scaledMin) & (self.physical_r_scaled < 1.0))] = (1. / (self.physical_r_scaled[np.where((self.physical_r_scaled >= self.physical_r_scaledMin) & (self.physical_r_scaled < 1.0))]**2. - 1)) * \
+                           (1. - (2. / np.sqrt(1. - self.physical_r_scaled[np.where((self.physical_r_scaled >= self.physical_r_scaledMin) & (self.physical_r_scaled < 1.0))]**2.)) * 
+                            np.arctanh(np.sqrt((1. - self.physical_r_scaled[np.where((self.physical_r_scaled >= self.physical_r_scaledMin) & (self.physical_r_scaled < 1.0))]) / (self.physical_r_scaled[np.where((self.physical_r_scaled >= self.physical_r_scaledMin) & (self.physical_r_scaled < 1.0))] + 1.))))
+        self.center_sing_extension = np.where((self.physical_r_scaled < self.physical_r_scaledMin) & (self.physical_r_scaled < 1.0))
+        if len(self.center_sing_extension[0]) > 0:
+            physical_r_small = self.physical_r_scaled[self.center_sing_extension]
+            proj[self.center_sing_extension] = 1./3. + (2./15.) * physical_r_small**2
+        analytic_limit = np.where(np.abs(self.physical_r_scaled - 1.0) < 1.0e-5)
+        proj[analytic_limit] = 1. / 3.
+        self.proj = proj
+        return None
+    
+    def proj_surf_density(self) -> None:
+        self.sigma = ((2. * self.r_s * self.nfwConcentration * self.rho_c_z) * self.proj).to('M_sun/Mpc2')
+        return None
+    
+    def kappa(self) -> None:
+        self.Kappa = (self.sigma / self.sigma_c).value
+        return None
+    
+    def _make_multipole_magnitude_2d(self, map_size: float = None, pixel_size: float = None):
+        if map_size:
+            self.map_size = map_size
+        if pixel_size:
+            self.pixel_size = pixel_size
+        self.pixel_number = int(self.map_size/self.pixel_size)
+        x, y = np.linspace(-self.map_size/2, self.map_size/2, self.pixel_number), np.linspace(-self.map_size/2, self.map_size/2, self.pixel_number)
+        self.lX, self.lY = np.meshgrid(x, y)
+        self.l2d = np.sqrt(self.lX**2 + self.lY**2)
+        return None
+    
+    def kappa2alpha(self) -> None:
+        kappa_fft = np.fft.fft2(self.Kappa)
+        phi_fft = -2. * kappa_fft / (self.l2d**2 + + 1e-30)
+
+        # Deflection angle: α̃ = -i ℓ φ̃ (gradient in Fourier space)
+        self.alphaX_fft = -1j * self.lX * phi_fft
+        self.alphaY_fft = -1j * self.lY * phi_fft
+        
+        # Handle division by zero at ℓ=0
+        self.alphaX_fft[np.isnan(self.alphaX_fft)] = 0
+        self.alphaY_fft[np.isnan(self.alphaY_fft)] = 0
+        
+        # Inverse FFT to get real-space deflection angles
+        # Convert from radians to arcmin
+        self.alphaX = np.degrees(np.fft.ifft2(self.alphaX_fft).real) * 60
+        self.alphaY = np.degrees(np.fft.ifft2(self.alphaY_fft).real) * 60
+        return None
+
+    def _calc_hubble_parameter_factor(self, omega_m: float = None, omega_l: float = None, z: float = None) -> float:
+        if omega_m:
+            self.omega_m = omega_m
+            print("omega_m changed to: " + str(omega_m))
+        if omega_l:
+            self.omega_l = omega_l
+            print("omega_l changed to: " + str(omega_l))
+        if z:
+            self.z = z
+            print("redshift z changed to: " + str(z))
+        self.hubble_parameter_factor = 1/np.sqrt((1+self.z) * self.omega_m + (1+self.z)**4 * self.omega_l)
+        #print("Hubble parameter factor is set to: " + str(self.hubble_parameter_factor))
+        return self.hubble_parameter_factor
+
+    def _calc_hubble_parameter(self, h_zero: float = None, omega_m: float = None, omega_l: float = None, z: float = None) -> float:
+        if h_zero:
+            self.h_zero = h_zero/100
+            print("h_zero changed to: " + str(h_zero))
+        if any([omega_m, omega_l, z]):
+            self._calc_hubble_parameter_factor(omega_m, omega_l, z)
+
+        self.hubble_parameter = np.sqrt(self.h_zero**2 * self.hubble_parameter_factor)
+        print("hubble parameter = " + str(self.hubble_parameter))
+        return self.hubble_parameter
+
+
 class lens_profile():
     """ 
         class is mostly reused/cleaned code from Awais Mirza 2019 at Argelander Institut Bonn
@@ -344,10 +564,12 @@ class lens_profile():
         """
         self.n = int(n)
 
-        dec = np.linspace(-theta_max, theta_max, int(n))
-        asc = np.linspace(theta_max, -theta_max, int(n))
+        dec = np.linspace(-theta_max, theta_max, int(n))    #[arcmin]
+        ra = np.linspace(theta_max, -theta_max, int(n))     #[arcmin]
 
-        pos_map = np.meshgrid(dec, asc)
+
+        pos_map = np.meshgrid(dec, ra) # [arcmin]
+
         self.pos_map = np.array(pos_map)
         print('pos map set!')
         return self.pos_map
