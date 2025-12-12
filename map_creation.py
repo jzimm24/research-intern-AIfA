@@ -122,17 +122,21 @@ class map_maker():
         self.X_fs, self.Y_fs = X_fs, Y_fs
         return None
     
-    def normalize_coordinates(self, X: list[float] = None, Y: list[float] = None, Fourier=False) -> None:
+    def _normalize_coordinates(self, X: list[float] = None, Y: list[float] = None, Fourier=False) -> None:
         
         if Fourier:
             self.X_fs_scaled = self.X/(max(self.X)-min(self.X))
             self.Y_fs_scaled = self.Y/(max(self.Y)-min(self.Y))
             self.R_fs_scaled = np.sqrt(self.X_fs_scaled**2 + self.Y_fs_scaled**2)
         else:
-            self.X_scaled = self.X/(max(self.X[0])-min(self.X[0]))
-            self.Y_scaled = self.Y/(max(self.Y)-min(self.Y))
-            
+            self.X_scaled = self.X/(max(self.X[0])-min(self.X[0]))*2
+            self.Y_scaled = self.Y/(max(self.Y)-min(self.Y))*2
             self.R_scaled = np.sqrt(self.X_scaled**2 + self.Y_scaled**2)
+            print("tttttttttttttttttttttttttttttt")
+            print(self.X_scaled)
+            print((max(self.X[0])-min(self.X[0])))
+            print("ääääääääääääääääääääääääää")
+            print(self.R_scaled)
         print("Normalized Coordinates set.")
         return None
 
@@ -143,6 +147,8 @@ class map_maker():
         fs_scale_factor = (self.pixel_size/60 * np.pi/180)
         #fs_scale_factor = 2*np.pi*(self.pixel_size/60) * (np.pi/180)            ## TODO: Check if aarcmin/arcsec conversion is correct here
         self.fs_scale_factor = fs_scale_factor
+        print("##############################")
+        print(self.fs_scale_factor)
         return fs_scale_factor
     
     def _R_fourierSpace_mapping(self) -> list[float]:
@@ -180,14 +186,13 @@ class map_maker():
             print("Used Spectrum type acoustic.")
             Dl = 6000 * (l / 200.)**(-1) * (1 + 0.5 * np.sin(l / 200. - 2) * np.exp(-(l - 200)**2 / 50000))
             spectrum = Dl * 2 * np.pi / (l * (l + 1.))
-            print("Dl: " + str(np.max(Dl)))
         else:
             raise missing_spectrum_type_error()
         spectrum[0] = 0
         if zero_dipole:
             spectrum[1] = 0
+            #spectrum[2] = 0
         self.spectrum = spectrum
-        print("spectrum: " + str(np.max(spectrum)))
 
         return None
     
@@ -204,7 +209,7 @@ class map_maker():
             TODO: add option to intervene in scale
 
         """
-        self.normalize_coordinates()
+        self._normalize_coordinates()
         if spectrum_path is not None:
             self.load_spectrum(self, spectrum_path)
         elif any((const, l_degrees, index)) or self.spectrum is None:
@@ -219,7 +224,6 @@ class map_maker():
         #     raise missing_variable_error("R_fs")
 
         spectrum_map_confined = spectrum_map_complete[multipole_field.astype(int)]
-        print(np.max(spectrum_map_confined))
         self.spectrum_map_complete = spectrum_map_complete
         self.spectrum_map_confined = spectrum_map_confined
         return None
@@ -242,8 +246,6 @@ class map_maker():
 
         self.grf_fs = np.sqrt(self.spectrum_map_confined)*self.random_noise_2d_fs              ## gaussian-random-field in Fourier-Space
 
-        print(np.max(self.grf_fs))
-
         self.grf = np.fft.ifft2(np.fft.fftshift(self.grf_fs)) / self.fs_scale_factor      ## gaussian-random-field after inverse fft2
 
         #self.grf_real = np.real(np.fft.ifft2(np.fft.fftshift(self.grf_fs))) / self.fs_scale_factor
@@ -259,7 +261,7 @@ class map_maker():
         plt.ylabel(r"$\theta_y$[arcmin]")
 
         cbar = plt.colorbar(im)
-        cbar.set_label("T [K]")   # label for the scale
+        cbar.set_label("T [μK]")   # label for the scale
         return None
     
     def rms_estimation(self) -> float:
@@ -269,7 +271,7 @@ class map_maker():
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 class nfw_lens():
-    def __init__(self, cluster_mass: float = 5e14, cluster_redshift: float = 0.7, map_size: float = None, pixel_size: float = None, rho_type: str = "crit", cosmology = None, grav_constant = 4.30091 * 10**(-3) / (10**(6)), speed_of_light = scipy.constants.speed_of_light, delta = 200, z_source = 1100):
+    def __init__(self, cluster_mass: float = 8e14, cluster_redshift: float = 0.5, map_size: float = None, pixel_size: float = None, rho_type: str = "crit", cosmology = None, grav_constant = 4.30091 * 10**(-3) / (10**(6)), speed_of_light = scipy.constants.speed_of_light, delta = 500, z_source = 1100):
         ## cluster parameters
         self.M = cluster_mass * u.Msun
         self.z = cluster_redshift
@@ -349,8 +351,8 @@ class nfw_lens():
     
     def _calc_angular_seperation(self) -> None:
         #self.theta = self.map.separation(coord.SkyCoord(self.cluster_coords).value * (np.pi / 180.))
-        center = coord.SkyCoord(self.cluster_coords, unit='deg')
-        self.theta = self.map.separation(center)
+        center = coord.SkyCoord(self.cluster_coords)
+        self.theta = self.map.separation(self.cluster_coords).value * (np.pi / 180 )
         return None
     
     def _calc_ref_density(self, rho_type: str = None) -> None:
@@ -370,7 +372,6 @@ class nfw_lens():
         
         # Calculate r_Δ from M_Δ = (4π/3) * Δ * ρ * r_Δ³
         self.r_v = ((self.M / (self.delta * 4. * np.pi / 3.) / self.rho_c_z)**(1./3.)).to('Mpc')
-        
         return None
     
     def _calc_concentration(self) -> None:
@@ -398,9 +399,11 @@ class nfw_lens():
     
     def _calc_pyhsical_dist(self) -> None:
         physical_r = self.D_l * self.theta  # Physical radius in Mpc
-        self.physical_r = physical_r * u.Mpc
-        physical_r_scaled = self.physical_r / self.r_s  # Dimensionless radius
-        self.physical_r_scaled = physical_r_scaled.decompose().value     
+        #self.physical_r = physical_r * u.Mpc
+        self.physical_r_scaled = physical_r / self.r_s
+        self.physical_r_scaled = self.physical_r_scaled.value
+        #physical_r_scaled = self.physical_r / self.r_s  # Dimensionless radius
+        #self.physical_r_scaled = physical_r_scaled.decompose().value
         return None
     
     def _calc_nfwProfile(self) -> None:
@@ -434,7 +437,13 @@ class nfw_lens():
         if pixel_size:
             self.pixel_size = pixel_size
         self.pixel_number = int(self.map_size/self.pixel_size)
-        x, y = np.linspace(-self.map_size/2, self.map_size/2, self.pixel_number), np.linspace(-self.map_size/2, self.map_size/2, self.pixel_number)
+        print(self.pixel_number)
+        print(self.map_size)
+        # Convert to radians for Fourier space
+        dx_rad, dy_rad = (np.pi/180)*(self.pixel_size/60.), (np.pi/180)*(self.pixel_size/60.)
+        x, y = np.fft.fftfreq(self.pixel_number, dx_rad), np.fft.fftfreq(self.pixel_number, dy_rad)
+        # Convert to angular frequency (2π factor)
+        x, y = 2*np.pi*x, 2*np.pi*y
         self.lX, self.lY = np.meshgrid(x, y)
         self.l2d = np.sqrt(self.lX**2 + self.lY**2)
         return None
@@ -455,6 +464,8 @@ class nfw_lens():
         # Convert from radians to arcmin
         self.alphaX = np.degrees(np.fft.ifft2(self.alphaX_fft).real) * 60
         self.alphaY = np.degrees(np.fft.ifft2(self.alphaY_fft).real) * 60
+        print("77777777777777777777777777777777777")
+        print(self.alphaX)
         return None
 
     def _calc_hubble_parameter_factor(self, omega_m: float = None, omega_l: float = None, z: float = None) -> float:
@@ -491,7 +502,7 @@ class lens_profile():
     """
 
 
-    def __init__(self, cluster_mass = 5e14, cluster_redshift = 0.7, r_max = 10, hubble_constant = 67.74, cosmology = "planck18", omega_m = 0.3089, omega_l = 0.6911, grav_constant = 4.30091 * 10**(-3) / (10**(6)), speed_of_light = scipy.constants.speed_of_light):
+    def __init__(self, extent = 3, n = 100, cluster_mass = 5e14, cluster_redshift = 0.7, r_max = 10, hubble_constant = 67.74, cosmology = "planck18", omega_m = 0.3089, omega_l = 0.6911, grav_constant = 4.30091 * 10**(-3) / (10**(6)), speed_of_light = scipy.constants.speed_of_light):
         ## cluster parameters
         self.M = cluster_mass  ## in M_sun
         self.z = cluster_redshift
@@ -520,9 +531,10 @@ class lens_profile():
         #self.r_min = 0.1 ## not usually changed
         self.rSpace = None
 
-        self.n = 100
+        self.n = n
 
         self.pos_map = None
+        self.theta_max = extent
         ## output
         self.M_nfw = None
         self.rhoLens = None
@@ -562,6 +574,7 @@ class lens_profile():
         """       
             so far exclusively squared maps centered at zero
         """
+        self.theta_max = theta_max
         self.n = int(n)
 
         dec = np.linspace(-theta_max, theta_max, int(n))    #[arcmin]
@@ -572,6 +585,7 @@ class lens_profile():
 
         self.pos_map = np.array(pos_map)
         print('pos map set!')
+        print("##############################################")
         return self.pos_map
 
     def set_rSpace(self) -> None:  ### naming dist_map
@@ -800,8 +814,8 @@ class lens_profile():
         theta = self.rSpace/self.comoving_dist
         #d_theta = 0.54 * (self.v_max)**2 * (self.comoving_dist - self._calc_comoving_dist(z=1100.0)) * (self._calc_f(angles=theta) / self._calc_comoving_dist(z = 1100.0))
         self.d_theta = 0.54 * (self.v_max)**2 * (self.comoving_dist - self._calc_comoving_dist(z=1100.0)) * (self.f / self._calc_comoving_dist(z = 1100.0))
+        print("##############################################")
         print("angular displacement calculated!")
-        print("Done!")
         return None
     
     def plot_d_theta(self) -> None:
@@ -816,3 +830,18 @@ class lens_profile():
         cbar = plt.colorbar(im)
         cbar.set_label("T [K]")   # label for the scale
         return None
+    
+    def lensing_map(self) -> list[list[float]]:
+        x = np.linspace(-self.theta_max/2, self.theta_max/2, self.n)
+        y = np.linspace(-self.theta_max/2, self.theta_max/2, self.n)
+        x_mesh, y_mesh = np.meshgrid(x, y)
+
+
+        theta = np.sqrt(x_mesh**2 + y_mesh**2)
+
+        d_theta_x = -self.d_theta * x_mesh/theta
+        d_theta_y = -self.d_theta * y_mesh/theta
+        print("##############################################")
+        print("Map of lensing angles created!")
+        print("##############################################" + "\n" + "Done!")
+        return d_theta_x, d_theta_y
