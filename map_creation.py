@@ -61,7 +61,7 @@ class map_maker():
         self.Y_fs_scaled = None
 
         self.R = None
-        self.R_scaled = None
+        self.R_scaled = None   
         self.R_check = False
         self.fs_scale_factor = None
         self.R_fs = None
