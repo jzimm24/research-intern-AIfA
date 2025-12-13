@@ -132,11 +132,6 @@ class map_maker():
             self.X_scaled = self.X/(max(self.X[0])-min(self.X[0]))*2
             self.Y_scaled = self.Y/(max(self.Y)-min(self.Y))*2
             self.R_scaled = np.sqrt(self.X_scaled**2 + self.Y_scaled**2)
-            print("tttttttttttttttttttttttttttttt")
-            print(self.X_scaled)
-            print((max(self.X[0])-min(self.X[0])))
-            print("ääääääääääääääääääääääääää")
-            print(self.R_scaled)
         print("Normalized Coordinates set.")
         return None
 
@@ -147,8 +142,6 @@ class map_maker():
         fs_scale_factor = (self.pixel_size/60 * np.pi/180)
         #fs_scale_factor = 2*np.pi*(self.pixel_size/60) * (np.pi/180)            ## TODO: Check if aarcmin/arcsec conversion is correct here
         self.fs_scale_factor = fs_scale_factor
-        print("##############################")
-        print(self.fs_scale_factor)
         return fs_scale_factor
     
     def _R_fourierSpace_mapping(self) -> list[float]:
@@ -271,7 +264,7 @@ class map_maker():
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 class nfw_lens():
-    def __init__(self, cluster_mass: float = 8e14, cluster_redshift: float = 0.5, map_size: float = None, pixel_size: float = None, rho_type: str = "crit", cosmology = None, grav_constant = 4.30091 * 10**(-3) / (10**(6)), speed_of_light = scipy.constants.speed_of_light, delta = 500, z_source = 1100):
+    def __init__(self, cluster_mass: float = 8e14, cluster_redshift: float = 0.5, map_size: float = None, pixel_size: float = None, pixel_number: int = None, rho_type: str = "crit", cosmology = FlatLambdaCDM(H0=67.74, Om0=0.3089), h_0: float = None, omega_m: float = None, grav_constant = 4.30091 * 10**(-3) / (10**(6)), speed_of_light = scipy.constants.speed_of_light, delta = 500, z_source = 1100):
         ## cluster parameters
         self.M = cluster_mass * u.Msun
         self.z = cluster_redshift
@@ -282,22 +275,24 @@ class nfw_lens():
 
         self.cosmology = cosmology
         self.delta = delta
+        self.h = h_0
+        self.omega_m = omega_m
         ## external variables
         self.map_size = map_size
         self.pixel_size = pixel_size
-        self.pixel_number = None
+        self.pixel_number = pixel_number
 
         self.rho_type = rho_type
         ## internal variables
-        self.map = None
+        self.map = None             # !!! in degrees; only centered and squared TODO: more flexible maps
         self.X_arcmin = None
         self.Y_arcmin = None
         self.X_deg = None
         self.Y_deg = None
 
-        self.cluster_coords = coord.SkyCoord(ra=0 * u.degree, dec=0 * u.degree)
+        self.cluster_coords = coord.SkyCoord(ra=0 * u.degree, dec=0 * u.degree)     ## hardcoded central galaxy cluster TODO: add more flexible cluster positions
 
-        self.theta = None
+        self.ang_sep = None
         self.rho_c_z = None
         self.r_v = None
         self.concentration = None
@@ -319,6 +314,7 @@ class nfw_lens():
         self.lX = None
         self.lY = None
         self.l2d = None
+        self.l2d_check = False
 
         ## output
         self.proj = None
@@ -330,14 +326,37 @@ class nfw_lens():
         self.alphaX_fft = None
         self.alphaY_fft = None
 
+        if map_size and pixel_size:
+            self.pixel_number = map_size / pixel_size
+        if map_size and pixel_number:
+            self.pixel_size = map_size / pixel_number
+        if pixel_size and pixel_number:
+            self.map_size = pixel_number*pixel_size
+
+        if any([h_0, omega_m]):
+            self.cosmology = FlatLambdaCDM(H0=h, Om0=omega_m)
+
+        cosmo.setCosmology("planck15")
+
         return None
         
 
-    def make_map(self, map_size: float = None, pixel_size: float = None):
-        if map_size:
+    def make_map(self, map_size: float = None, pixel_size: float = None, pixel_number: int = None):
+        if map_size and pixel_size:
             self.map_size = map_size
-        if pixel_size:
             self.pixel_size = pixel_size
+            self.pixel_number = int(self.map_size / self.pixel_size)
+        elif pixel_size and pixel_number:
+            self.pixel_size = pixel_size
+            self.pixel_number = pixel_number
+            self.map_size = self.pixel_number * self.pixel_size
+        elif pixel_number and map_size:
+            self.pixel_number = pixel_number
+            self.map_size = map_size
+            self.pixel_size = self.map_size / self.pixel_number
+        else:
+            raise missing_variable_error("map variables")
+        
         self.pixel_number = int(self.map_size/self.pixel_size)
         x, y = np.linspace(-self.map_size/2, self.map_size/2, self.pixel_number), np.linspace(-self.map_size/2, self.map_size/2, self.pixel_number)
         # arcmin grid
@@ -349,18 +368,22 @@ class nfw_lens():
         
         return None
     
-    def _calc_angular_seperation(self) -> None:
-        #self.theta = self.map.separation(coord.SkyCoord(self.cluster_coords).value * (np.pi / 180.))
-        center = coord.SkyCoord(self.cluster_coords)
-        self.theta = self.map.separation(self.cluster_coords).value * (np.pi / 180 )
+    def _calc_angular_seperation(self, map_size: float = None, pixel_size: float = None, pixel_number: int = None) -> None:
+        if map_size or pixel_size or pixel_number:
+            self.make_map(map_size, pixel_size, pixel_number)
+        self.ang_sep = self.map.separation(self.cluster_coords).value * (np.pi / 180 )
         return None
     
-    def _calc_ref_density(self, rho_type: str = None) -> None:
+    def _calc_ref_density(self, rho_type: str = None, z: float = None) -> None:
+        if z:
+            self.z = z
         if rho_type:
             self.rho_type = rho_type
         if self.rho_type == 'crit':
+            print(self.cosmology)
             rho_c_z = self.cosmology.critical_density(self.z)
         elif self.rho_type == 'mean':
+            print(self.cosmology)
             rho_c_z = self.cosmology.critical_density(self.z) * self.cosmology.critical_density(self.z)
         else:
             raise ValueError("rho_def must be 'crit' or 'mean'")
@@ -368,37 +391,81 @@ class nfw_lens():
         self.rho_c_z = rho_c_z.to('M_sun/Mpc3')
         return None
     
-    def _calc_virial_r(self) -> None:
-        
-        # Calculate r_Δ from M_Δ = (4π/3) * Δ * ρ * r_Δ³
+    def _calc_virial_r(self, cluster_mass: float = None, delta: float = None, ref_dens: float = None, rho_type: str = None, z: float = None) -> None:
+        if cluster_mass:
+            self.M = cluster_mass * u.Msun
+        if delta:
+            self.delta = delta
+        if ref_dens:
+            self.rho_c_z = ref_dens
+        #if rho_type or z or (not self.rho_c_z):
+        self._calc_ref_density(rho_type, z)
         self.r_v = ((self.M / (self.delta * 4. * np.pi / 3.) / self.rho_c_z)**(1./3.)).to('Mpc')
         return None
     
-    def _calc_concentration(self) -> None:
+    def _calc_concentration(self, cluster_mass: float = None, delta: float = None, ref_dens: float = None, rho_type: str = None, z: float = None) -> None:
+        if cluster_mass:
+            self.M = cluster_mass * u.Msun
+        if delta:
+            self.delta = delta
+        if ref_dens:
+            self.rho_c_z = ref_dens
+        #if rho_type or z or (not self.rho_c_z):
+        self._calc_ref_density(rho_type, z)
         self.concentration = halo_concentration.concentration(self.M.value, '%s%s' % (self.delta, self.rho_type[0]), self.z)
         return None
 
-    def _calc_nfwConcentration(self) -> None:
+    def _calc_nfwConcentration(self, cluster_mass: float = None, delta: float = None, ref_dens: float = None, rho_type: str = None, z: float = None) -> None:
+        if delta:
+            self.delta = delta
+        if any([cluster_mass, delta, ref_dens, rho_type, z]) or (not self.concentration):
+            self._calc_concentration(cluster_mass, delta, ref_dens, rho_type, z)
         self.nfwConcentration = (self.delta / 3.) * (self.concentration**3.) / (np.log(1. + self.concentration) - self.concentration / (1. + self.concentration))
         return None
     
-    def _calc_nfwScaleRadius(self) -> None:
+    def _calc_nfwScaleRadius(self, cluster_mass: float = None, delta: float = None, ref_dens: float = None, rho_type: str = None, z: float = None) -> None:
+        #if any([cluster_mass, delta, ref_dens, rho_type, z]) or (not self.r_v) or (not self.concentration):
+        self._calc_virial_r(cluster_mass, delta, ref_dens, rho_type, z)
+        self._calc_concentration(cluster_mass, delta, ref_dens, rho_type, z)
         self.r_s = self.r_v.to('Mpc') / self.concentration
         return None
     
-    def _calc_lensing_distances(self) -> None:
+    def _calc_lensing_distances(self, z: float = None, z_source: float = None) -> None:
+        if z:
+            self.z = z
+        if z_source:
+            self.z_source = z_source
         self.D_l = self.cosmology.comoving_distance(self.z) / (1. + self.z)  # Lens distance
         self.D_s = self.cosmology.comoving_distance(self.z_source) / (1. + self.z_source)  # Source distance
         self.D_ls = (self.cosmology.comoving_distance(self.z_source) - self.cosmology.comoving_distance(self.z)) / (1. + self.z_source)
         return None
     
-    def _calc_crit_surface_density(self) -> None:
+    def _calc_crit_surface_density(self, z: float = None, z_source: float = None) -> None:
+        if any([z, z_source]) or (not any([self.D_l, self.D_s, self.D_ls])):
+            self._calc_lensing_distances(z, z_source)
         self.sigma_c = (((const.c.cgs**2.) / (4. * np.pi * const.G.cgs)) * 
                (self.D_s / (self.D_l * self.D_ls))).to('M_sun/Mpc2')
         return None
     
-    def _calc_pyhsical_dist(self) -> None:
-        physical_r = self.D_l * self.theta  # Physical radius in Mpc
+    # def _calc_crit_surface_density(self, z: float = None, z_source: float = None, G:float = None, c: float = None) -> None:
+    #     if G:
+    #            self.G = G
+    #     if c:
+    #            self.c = c
+        #   if any([z, z_source]):
+        #     self._calc_lensing_distances(z, z_source)
+    #     self.sigma_c = (((const.c.cgs**2.) / (4. * np.pi * const.G.cgs)) * 
+    #            (self.D_s / (self.D_l * self.D_ls))).to('M_sun/Mpc2')
+    #     return None
+
+    def _calc_pyhsical_dist(self, map_size: float = None, pixel_size: float = None, pixel_number: int = None, z: float = None, z_source: float = None, cluster_mass: float = None, delta: float = None, ref_dens: float = None, rho_type: str = None) -> None:
+        if any([map_size, pixel_size, pixel_number]) or (not self.ang_sep):
+            self._calc_angular_seperation(map_size, pixel_size, pixel_number)
+        #if any([z, z_source]) or (not any([self.D_l, self.D_s, self.D_ls])):
+        self._calc_lensing_distances(z, z_source)
+        if any([z, cluster_mass, delta, ref_dens, rho_type]) or (not self.r_s):
+            self._calc_nfwScaleRadius(cluster_mass, delta, ref_dens, rho_type, z)
+        physical_r = self.D_l * self.ang_sep  # Physical radius in Mpc
         #self.physical_r = physical_r * u.Mpc
         self.physical_r_scaled = physical_r / self.r_s
         self.physical_r_scaled = self.physical_r_scaled.value
@@ -406,7 +473,9 @@ class nfw_lens():
         #self.physical_r_scaled = physical_r_scaled.decompose().value
         return None
     
-    def _calc_nfwProfile(self) -> None:
+    def _calc_nfwProfile(self, map_size: float = None, pixel_size: float = None, pixel_number: int = None, z: float = None, z_source: float = None, cluster_mass: float = None, delta: float = None, ref_dens: float = None, rho_type: str = None) -> None:
+        if any([map_size, pixel_size, pixel_number, z, z_source, cluster_mass, delta, ref_dens, rho_type]) or (not self.physical_r_scaled):
+            self._calc_pyhsical_dist(map_size, pixel_size, pixel_number, z, z_source, cluster_mass, delta, ref_dens, rho_type)
         proj = np.zeros(self.physical_r_scaled.shape)
         proj[np.where(self.physical_r_scaled > 1.0)] = (1. / (self.physical_r_scaled[np.where(self.physical_r_scaled > 1.0)]**2. - 1)) * \
                       (1. - (2. / np.sqrt(self.physical_r_scaled[np.where(self.physical_r_scaled > 1.0)]**2. - 1.)) * 
@@ -423,11 +492,19 @@ class nfw_lens():
         self.proj = proj
         return None
     
-    def proj_surf_density(self) -> None:
+    def proj_surf_density(self, map_size: float = None, pixel_size: float = None, pixel_number: int = None, z: float = None, z_source: float = None, cluster_mass: float = None, delta: float = None, ref_dens: float = None, rho_type: str = None) -> None:
+        #if any([map_size, pixel_size, pixel_number, z, z_source, cluster_mass, delta, ref_dens, rho_type]) or (not self.proj.any()) or (not self.nfwConcentration):
+        self._calc_nfwProfile(map_size, pixel_size, pixel_number, z, z_source, cluster_mass, delta, ref_dens, rho_type)
+        self._calc_nfwScaleRadius(cluster_mass, delta, ref_dens, rho_type, z)
+        self._calc_nfwConcentration(cluster_mass, delta, ref_dens, rho_type, z)
+        self._calc_ref_density(rho_type, z)
         self.sigma = ((2. * self.r_s * self.nfwConcentration * self.rho_c_z) * self.proj).to('M_sun/Mpc2')
         return None
     
-    def kappa(self) -> None:
+    def kappa(self, map_size: float = None, pixel_size: float = None, pixel_number: int = None, z: float = None, z_source: float = None, cluster_mass: float = None, delta: float = None, ref_dens: float = None, rho_type: str = None) -> None:
+        #if any([map_size, pixel_size, pixel_number, z, z_source, cluster_mass, delta, ref_dens, rho_type]) or (not self.sigma):
+        self._calc_crit_surface_density(z, z_source)
+        self.proj_surf_density(map_size, pixel_size, pixel_number, z, z_source, cluster_mass, delta, ref_dens, rho_type)
         self.Kappa = (self.sigma / self.sigma_c).value
         return None
     
@@ -446,9 +523,12 @@ class nfw_lens():
         x, y = 2*np.pi*x, 2*np.pi*y
         self.lX, self.lY = np.meshgrid(x, y)
         self.l2d = np.sqrt(self.lX**2 + self.lY**2)
+        self.l2d_check = True
         return None
     
     def kappa2alpha(self) -> None:
+        if not self.l2d_check:
+            self._make_multipole_magnitude_2d()
         kappa_fft = np.fft.fft2(self.Kappa)
         phi_fft = -2. * kappa_fft / (self.l2d**2 + + 1e-30)
 
@@ -464,8 +544,6 @@ class nfw_lens():
         # Convert from radians to arcmin
         self.alphaX = np.degrees(np.fft.ifft2(self.alphaX_fft).real) * 60
         self.alphaY = np.degrees(np.fft.ifft2(self.alphaY_fft).real) * 60
-        print("77777777777777777777777777777777777")
-        print(self.alphaX)
         return None
 
     def _calc_hubble_parameter_factor(self, omega_m: float = None, omega_l: float = None, z: float = None) -> float:
