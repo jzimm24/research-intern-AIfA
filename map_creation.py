@@ -189,6 +189,17 @@ class map_maker():
 
         return None
     
+    def load_and_make_spectrum(self, spectrum_path, zero_dipole = False) -> None:
+        l, Dl = np.loadtxt(spectrum_path, 
+                             usecols=(0, 1), unpack=True)
+        spectrum = Dl * 2 * np.pi / (l * (l + 1.))
+        spectrum[0] = 0
+        if zero_dipole:
+            spectrum[1] = 0
+            #spectrum[2] = 0
+        self.spectrum = spectrum
+        return None
+    
     def load_spectrum(self, path: str) -> None:
         """ 
             Spectrum different than a power law? Here you go...
@@ -333,8 +344,8 @@ class nfw_lens():
         if pixel_size and pixel_number:
             self.map_size = pixel_number*pixel_size
 
-        if any([h_0, omega_m]):
-            self.cosmology = FlatLambdaCDM(H0=h, Om0=omega_m)
+        if any([h_0, omega_m]):  
+            self.cosmology = FlatLambdaCDM(H0=h_0, Om0=omega_m)
 
         cosmo.setCosmology("planck15")
 
@@ -514,8 +525,6 @@ class nfw_lens():
         if pixel_size:
             self.pixel_size = pixel_size
         self.pixel_number = int(self.map_size/self.pixel_size)
-        print(self.pixel_number)
-        print(self.map_size)
         # Convert to radians for Fourier space
         dx_rad, dy_rad = (np.pi/180)*(self.pixel_size/60.), (np.pi/180)*(self.pixel_size/60.)
         x, y = np.fft.fftfreq(self.pixel_number, dx_rad), np.fft.fftfreq(self.pixel_number, dy_rad)
