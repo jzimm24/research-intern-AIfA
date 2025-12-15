@@ -11,6 +11,11 @@ import colossus.halo
 import colossus.halo.mass_so as halo_mass
 import colossus.halo.concentration as halo_concentration
 
+from astropy import constants as const
+from astropy import units as u
+from astropy import coordinates as coord
+from astropy.cosmology import FlatLambdaCDM
+
 from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 
 # -----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -24,11 +29,16 @@ class missing_internal_variable_error(Exception):
     """raised when necessary variables are calculated"""
     def __init__(self, variable_name: str):
         super().__init__(f"{variable_name} has not been calculated. Please first calculate {variable_name}.")
+
+class missing_spectrum_type_error(Exception):
+    """raised when spectrum type is not given"""
+    def __init__(self):
+        super().__init__(f"Spectrum type has not been specified. Please provide a type.")
     
 # -----------------------------------------------------------------------------------------------------------------------------------------------------
 
 class map_maker():
-    def __init__(self, map_size: int = None, pixel_size: float = None, pixel_number: int = None, l_degrees: int = None, const: float = 1, index: float = -1):
+    def __init__(self, map_size: int = None, pixel_size: float = None, pixel_number: int = None, l_degrees: int = None, const: float = 1, index: float = -1, spectrum_type: str = "power law"):
         ## external variables
         self.map_size = map_size
         self.pixel_size = pixel_size
@@ -36,12 +46,26 @@ class map_maker():
         self.l_degrees = l_degrees
         self.const = const
         self.index = index
+        self.spectrum_type = spectrum_type
         ## internal variables
         self.spectrum = None                       # unless loaded in
+
+        self.X = None
+        self.Y = None
+        self.X_fs = None
+        self.Y_fs = None
+
+        self.X_scaled = None
+        self.Y_scaled = None
+        self.X_fs_scaled = None
+        self.Y_fs_scaled = None
+
         self.R = None
+        self.R_scaled = None   
         self.R_check = False
         self.fs_scale_factor = None
         self.R_fs = None
+        self.R_fs_scaled = None
         self.R_fs_check = False
         self.random_noise_2d = None
         self.random_noise_2d_fs = None
@@ -58,7 +82,7 @@ class map_maker():
         if pixel_number is not None:
             self.pixel_number = pixel_number
         else:
-            self.pixel_number = self.map_size*(self.pixel_size)
+            self.pixel_number = self.map_size/(self.pixel_size)
         if not all((self.map_size, self.pixel_size, self.pixel_number)):
             print("!!!!!!!!!!!There are still missing map_variables.")
             return False
@@ -78,20 +102,45 @@ class map_maker():
         X, Y = np.meshgrid(x, y, sparse=True)           ## TODO: check if sparse works correctly
         self.R = np.sqrt(X**2 + Y**2)
         self.R_check = True
-        print("coordinates map made.")
+        print("coordinates made.")
+        self.X = X
+        self.Y = Y
 
         return None
+    
+    def make_fourier_map_coordinates(self) -> None:
+        self._compute_fourierSpace_scaler()
+        #pixel_size_fs = (np.pi/180)*(self.pixel_size/60.)
+        #x_fs = 2*np.pi(np.fft.fftfreq(self.pixel_number, pixel_size_fs))
+        #y_fs = 2*np.pi(np.fft.fftfreq(self.pixel_number, pixel_size_fs))
+        pixel_size_fs = 2*np.pi*self.fs_scale_factor
+        x_fs = 2*np.pi(np.fft.fftfreq(self.pixel_number, pixel_size_fs))
+        y_fs = 2*np.pi(np.fft.fftfreq(self.pixel_number, pixel_size_fs))
+        #x_fs_min, x_fs_max = min(x_fs), max(x_fs)
+        #y_fs_min, y_fs_max = min(y_fs), max(y_fs)
+        X_fs, Y_fs = np.meshgrid(x_fs, y_fs)
+        self.X_fs, self.Y_fs = X_fs, Y_fs
+        return None
+    
+    def _normalize_coordinates(self, X: list[float] = None, Y: list[float] = None, Fourier=False) -> None:
+        
+        if Fourier:
+            self.X_fs_scaled = self.X/(max(self.X)-min(self.X))
+            self.Y_fs_scaled = self.Y/(max(self.Y)-min(self.Y))
+            self.R_fs_scaled = np.sqrt(self.X_fs_scaled**2 + self.Y_fs_scaled**2)
+        else:
+            self.X_scaled = self.X/(max(self.X[0])-min(self.X[0]))*2
+            self.Y_scaled = self.Y/(max(self.Y)-min(self.Y))*2
+            self.R_scaled = np.sqrt(self.X_scaled**2 + self.Y_scaled**2)
+        print("Normalized Coordinates set.")
+        return None
+
     
     def _compute_fourierSpace_scaler(self) -> float:
         if self.pixel_size is None:
             raise missing_variable_error("pixel_size")
-        
-        #fs_scale_factor = np.pi/(self.pixel_size * np.pi/180)
-        
-        fs_scale_factor = (np.pi/180)*(self.pixel_size/60)
-        print("########################################")
-        print(fs_scale_factor)
-        
+        fs_scale_factor = (self.pixel_size/60 * np.pi/180)
+        #fs_scale_factor = 2*np.pi*(self.pixel_size/60) * (np.pi/180)            ## TODO: Check if aarcmin/arcsec conversion is correct here
         self.fs_scale_factor = fs_scale_factor
         return fs_scale_factor
     
@@ -118,15 +167,37 @@ class map_maker():
             print("Full set of variables for the spectrum (power-law) defined.")
             return True
 
-    def make_spectrum(self, const: float = None, l_degrees: int = None, index: float = None) -> None:
+    def make_spectrum(self, const: float = None, l_degrees: int = None, index: float = None, zero_dipole=False, spectrum_type: str = None,) -> None:
             
         self.set_spectrum_variables(const, l_degrees, index)
-        l = np.arange(self.l_degrees, dtype=float)
-
-        spectrum=self.const*(l**self.index)
+        l = np.arange(2, self.l_degrees, dtype=float)
+        if spectrum_type:
+            self.spectrum_type = spectrum_type
+        if self.spectrum_type == "power law":
+            spectrum=self.const*(l**self.index)
+        if self.spectrum_type == "acoustic":
+            print("Used Spectrum type acoustic.")
+            Dl = 6000 * (l / 200.)**(-1) * (1 + 0.5 * np.sin(l / 200. - 2) * np.exp(-(l - 200)**2 / 50000))
+            spectrum = Dl * 2 * np.pi / (l * (l + 1.))
+        else:
+            raise missing_spectrum_type_error()
         spectrum[0] = 0
+        if zero_dipole:
+            spectrum[1] = 0
+            #spectrum[2] = 0
         self.spectrum = spectrum
 
+        return None
+    
+    def load_and_make_spectrum(self, spectrum_path, zero_dipole = False) -> None:
+        l, Dl = np.loadtxt(spectrum_path, 
+                             usecols=(0, 1), unpack=True)
+        spectrum = Dl * 2 * np.pi / (l * (l + 1.))
+        spectrum[0] = 0
+        if zero_dipole:
+            spectrum[1] = 0
+            #spectrum[2] = 0
+        self.spectrum = spectrum
         return None
     
     def load_spectrum(self, path: str) -> None:
@@ -136,32 +207,27 @@ class map_maker():
         """
         return None
     
-    def _make_spectrum_map(self, spectrum_path: str = None, const: float = None, l_degrees: int = None, index: float = None) -> None:
+    def make_spectrum_map(self, spectrum_path: str = None, const: float = None, l_degrees: int = None, index: float = None, zero_dipole = False, spectrum_type = "power law") -> None:
         """ 
             Creates a map of the spectrum (Inside Fourier Space) as well as a cut version leaving out areas of null values.
             TODO: add option to intervene in scale
 
         """
-
+        self._normalize_coordinates()
         if spectrum_path is not None:
             self.load_spectrum(self, spectrum_path)
         elif any((const, l_degrees, index)) or self.spectrum is None:
-            self.make_spectrum(const, l_degrees, index)
+            self.make_spectrum(const, l_degrees, index, zero_dipole, spectrum_type)
 
-        if self.R_fs is None:
-            self._R_fourierSpace_mapping()
+        multipole_field = self.R_scaled * np.pi / self.fs_scale_factor
 
-        spectrum_map_complete = np.zeros(int(self.R_fs.max())+1)
-        print("äääääääääääääääääääääääääääääääääääääääää")
-        print(self.spectrum.size)
-        
-        #spectrum_map_complete[0:self.spectrum.size] = self.spectrum
-        spectrum_map_complete = self.spectrum
+        spectrum_map_complete = np.zeros(int(multipole_field.max())+1)
+        spectrum_map_complete[0:self.spectrum.size] = self.spectrum
 
-        if self.R_fs is None:
-            raise missing_variable_error("R_fs")
+        # if self.R_fs is None:
+        #     raise missing_variable_error("R_fs")
 
-        spectrum_map_confined = spectrum_map_complete[(self.R_fs).astype(int)]
+        spectrum_map_confined = spectrum_map_complete[multipole_field.astype(int)]
         self.spectrum_map_complete = spectrum_map_complete
         self.spectrum_map_confined = spectrum_map_confined
         return None
@@ -173,33 +239,33 @@ class map_maker():
         self.random_noise_2d_fs = np.fft.fft2(self.random_noise_2d)
         return None
 
-    def make_gaussian_random_field(self) -> list[float]:
+    def make_gaussian_random_field(self, zero_dipole = False, spectrum_type: str = "power law") -> list[float]:
         
         if not self.R_check:
             self.make_map_coordinates()
         if not self.R_fs_check:  
             self._R_fourierSpace_mapping()
-        
-        self._make_spectrum_map()
+        self.make_spectrum_map(zero_dipole=zero_dipole, spectrum_type=spectrum_type)
         self._make_random_noise()
 
-        self.grf_fs = self.spectrum_map_confined*self.random_noise_2d_fs              ## gaussian-random-field in Fourier-Space
+        self.grf_fs = np.sqrt(self.spectrum_map_confined)*self.random_noise_2d_fs              ## gaussian-random-field in Fourier-Space
 
-        self.grf = np.fft.ifft2(np.fft.fftshift(self.grf_fs))           ## gaussian-random-field after inverse fft2
+        self.grf = np.fft.ifft2(np.fft.fftshift(self.grf_fs)) / self.fs_scale_factor      ## gaussian-random-field after inverse fft2
 
-        self.grf_real = np.real(np.fft.ifft2(np.fft.fftshift(self.grf_fs))) 
+        #self.grf_real = np.real(np.fft.ifft2(np.fft.fftshift(self.grf_fs))) / self.fs_scale_factor
+        self.grf_real = np.real(np.fft.ifft2(np.fft.ifftshift(self.grf_fs))) / self.fs_scale_factor
         
         return self.grf_fs, self.grf, self.grf_real
     
     def plot_gaussian_random_field(self) -> None:
-        im = plt.imshow(self.grf_real, origin='lower', interpolation='bilinear', cmap='RdBu')
+        im = plt.imshow(self.grf_real, extent = [0, self.pixel_number*self.pixel_size, 0, self.pixel_number*self.pixel_size], origin='lower', interpolation='bilinear', cmap='RdBu')
         im.set_clim()
 
         plt.xlabel(r"$\theta_x$[arcmin]")
         plt.ylabel(r"$\theta_y$[arcmin]")
 
         cbar = plt.colorbar(im)
-        cbar.set_label("T [K]")   # label for the scale
+        cbar.set_label("T [μK]")   # label for the scale
         return None
     
     def rms_estimation(self) -> float:
@@ -208,6 +274,313 @@ class map_maker():
 
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+class nfw_lens():
+    def __init__(self, cluster_mass: float = 8e14, cluster_redshift: float = 0.5, map_size: float = None, pixel_size: float = None, pixel_number: int = None, rho_type: str = "crit", cosmology = FlatLambdaCDM(H0=67.74, Om0=0.3089), h_0: float = None, omega_m: float = None, grav_constant = 4.30091 * 10**(-3) / (10**(6)), speed_of_light = scipy.constants.speed_of_light, delta = 500, z_source = 1100):
+        ## cluster parameters
+        self.M = cluster_mass * u.Msun
+        self.z = cluster_redshift
+        ## physics
+        self.z_source = z_source
+        self.c = speed_of_light
+        self.G = grav_constant
+
+        self.cosmology = cosmology
+        self.delta = delta
+        self.h = h_0
+        self.omega_m = omega_m
+        ## external variables
+        self.map_size = map_size
+        self.pixel_size = pixel_size
+        self.pixel_number = pixel_number
+
+        self.rho_type = rho_type
+        ## internal variables
+        self.map = None             # !!! in degrees; only centered and squared TODO: more flexible maps
+        self.X_arcmin = None
+        self.Y_arcmin = None
+        self.X_deg = None
+        self.Y_deg = None
+
+        self.cluster_coords = coord.SkyCoord(ra=0 * u.degree, dec=0 * u.degree)     ## hardcoded central galaxy cluster TODO: add more flexible cluster positions
+
+        self.ang_sep = None
+        self.rho_c_z = None
+        self.r_v = None
+        self.concentration = None
+        self.nfwConcentration = None
+
+        self.r_s = None
+
+        self.D_l = None
+        self.D_s = None
+        self.D_ls = None
+
+        self.sigma_c = None
+
+        self.physical_r = None
+        self.physical_r_scaled = None
+        self.physical_r_scaledMin = 1e-4
+        self.center_sing_extension = None
+
+        self.lX = None
+        self.lY = None
+        self.l2d = None
+        self.l2d_check = False
+
+        ## output
+        self.proj = None
+        self.sigma = None
+        self.Kappa = None
+
+        self.alphaX = None
+        self.alphaY = None
+        self.alphaX_fft = None
+        self.alphaY_fft = None
+
+        if map_size and pixel_size:
+            self.pixel_number = map_size / pixel_size
+        if map_size and pixel_number:
+            self.pixel_size = map_size / pixel_number
+        if pixel_size and pixel_number:
+            self.map_size = pixel_number*pixel_size
+
+        if any([h_0, omega_m]):  
+            self.cosmology = FlatLambdaCDM(H0=h_0, Om0=omega_m)
+
+        cosmo.setCosmology("planck15")
+
+        return None
+        
+
+    def make_map(self, map_size: float = None, pixel_size: float = None, pixel_number: int = None):
+        if map_size and pixel_size:
+            self.map_size = map_size
+            self.pixel_size = pixel_size
+            self.pixel_number = int(self.map_size / self.pixel_size)
+        elif pixel_size and pixel_number:
+            self.pixel_size = pixel_size
+            self.pixel_number = pixel_number
+            self.map_size = self.pixel_number * self.pixel_size
+        elif pixel_number and map_size:
+            self.pixel_number = pixel_number
+            self.map_size = map_size
+            self.pixel_size = self.map_size / self.pixel_number
+        else:
+            raise missing_variable_error("map variables")
+        
+        self.pixel_number = int(self.map_size/self.pixel_size)
+        x, y = np.linspace(-self.map_size/2, self.map_size/2, self.pixel_number), np.linspace(-self.map_size/2, self.map_size/2, self.pixel_number)
+        # arcmin grid
+        self.X_arcmin, self.Y_arcmin = np.meshgrid(x, y)
+        # degree grid
+        self.X_deg, self.Y_deg = self.X_arcmin/60, self.Y_arcmin/60
+        self.map = coord.SkyCoord(ra=self.X_deg * u.degree, 
+                               dec=self.Y_deg * u.degree)
+        
+        return None
+    
+    def _calc_angular_seperation(self, map_size: float = None, pixel_size: float = None, pixel_number: int = None) -> None:
+        if map_size or pixel_size or pixel_number:
+            self.make_map(map_size, pixel_size, pixel_number)
+        self.ang_sep = self.map.separation(self.cluster_coords).value * (np.pi / 180 )
+        return None
+    
+    def _calc_ref_density(self, rho_type: str = None, z: float = None) -> None:
+        if z:
+            self.z = z
+        if rho_type:
+            self.rho_type = rho_type
+        if self.rho_type == 'crit':
+            print(self.cosmology)
+            rho_c_z = self.cosmology.critical_density(self.z)
+        elif self.rho_type == 'mean':
+            print(self.cosmology)
+            rho_c_z = self.cosmology.critical_density(self.z) * self.cosmology.critical_density(self.z)
+        else:
+            raise ValueError("rho_def must be 'crit' or 'mean'")
+        
+        self.rho_c_z = rho_c_z.to('M_sun/Mpc3')
+        return None
+    
+    def _calc_virial_r(self, cluster_mass: float = None, delta: float = None, ref_dens: float = None, rho_type: str = None, z: float = None) -> None:
+        if cluster_mass:
+            self.M = cluster_mass * u.Msun
+        if delta:
+            self.delta = delta
+        if ref_dens:
+            self.rho_c_z = ref_dens
+        #if rho_type or z or (not self.rho_c_z):
+        self._calc_ref_density(rho_type, z)
+        self.r_v = ((self.M / (self.delta * 4. * np.pi / 3.) / self.rho_c_z)**(1./3.)).to('Mpc')
+        return None
+    
+    def _calc_concentration(self, cluster_mass: float = None, delta: float = None, ref_dens: float = None, rho_type: str = None, z: float = None) -> None:
+        if cluster_mass:
+            self.M = cluster_mass * u.Msun
+        if delta:
+            self.delta = delta
+        if ref_dens:
+            self.rho_c_z = ref_dens
+        #if rho_type or z or (not self.rho_c_z):
+        self._calc_ref_density(rho_type, z)
+        self.concentration = halo_concentration.concentration(self.M.value, '%s%s' % (self.delta, self.rho_type[0]), self.z)
+        return None
+
+    def _calc_nfwConcentration(self, cluster_mass: float = None, delta: float = None, ref_dens: float = None, rho_type: str = None, z: float = None) -> None:
+        if delta:
+            self.delta = delta
+        if any([cluster_mass, delta, ref_dens, rho_type, z]) or (not self.concentration):
+            self._calc_concentration(cluster_mass, delta, ref_dens, rho_type, z)
+        self.nfwConcentration = (self.delta / 3.) * (self.concentration**3.) / (np.log(1. + self.concentration) - self.concentration / (1. + self.concentration))
+        return None
+    
+    def _calc_nfwScaleRadius(self, cluster_mass: float = None, delta: float = None, ref_dens: float = None, rho_type: str = None, z: float = None) -> None:
+        #if any([cluster_mass, delta, ref_dens, rho_type, z]) or (not self.r_v) or (not self.concentration):
+        self._calc_virial_r(cluster_mass, delta, ref_dens, rho_type, z)
+        self._calc_concentration(cluster_mass, delta, ref_dens, rho_type, z)
+        self.r_s = self.r_v.to('Mpc') / self.concentration
+        return None
+    
+    def _calc_lensing_distances(self, z: float = None, z_source: float = None) -> None:
+        if z:
+            self.z = z
+        if z_source:
+            self.z_source = z_source
+        self.D_l = self.cosmology.comoving_distance(self.z) / (1. + self.z)  # Lens distance
+        self.D_s = self.cosmology.comoving_distance(self.z_source) / (1. + self.z_source)  # Source distance
+        self.D_ls = (self.cosmology.comoving_distance(self.z_source) - self.cosmology.comoving_distance(self.z)) / (1. + self.z_source)
+        return None
+    
+    def _calc_crit_surface_density(self, z: float = None, z_source: float = None) -> None:
+        if any([z, z_source]) or (not any([self.D_l, self.D_s, self.D_ls])):
+            self._calc_lensing_distances(z, z_source)
+        self.sigma_c = (((const.c.cgs**2.) / (4. * np.pi * const.G.cgs)) * 
+               (self.D_s / (self.D_l * self.D_ls))).to('M_sun/Mpc2')
+        return None
+    
+    # def _calc_crit_surface_density(self, z: float = None, z_source: float = None, G:float = None, c: float = None) -> None:
+    #     if G:
+    #            self.G = G
+    #     if c:
+    #            self.c = c
+        #   if any([z, z_source]):
+        #     self._calc_lensing_distances(z, z_source)
+    #     self.sigma_c = (((const.c.cgs**2.) / (4. * np.pi * const.G.cgs)) * 
+    #            (self.D_s / (self.D_l * self.D_ls))).to('M_sun/Mpc2')
+    #     return None
+
+    def _calc_pyhsical_dist(self, map_size: float = None, pixel_size: float = None, pixel_number: int = None, z: float = None, z_source: float = None, cluster_mass: float = None, delta: float = None, ref_dens: float = None, rho_type: str = None) -> None:
+        if any([map_size, pixel_size, pixel_number]) or (not self.ang_sep):
+            self._calc_angular_seperation(map_size, pixel_size, pixel_number)
+        #if any([z, z_source]) or (not any([self.D_l, self.D_s, self.D_ls])):
+        self._calc_lensing_distances(z, z_source)
+        if any([z, cluster_mass, delta, ref_dens, rho_type]) or (not self.r_s):
+            self._calc_nfwScaleRadius(cluster_mass, delta, ref_dens, rho_type, z)
+        physical_r = self.D_l * self.ang_sep  # Physical radius in Mpc
+        #self.physical_r = physical_r * u.Mpc
+        self.physical_r_scaled = physical_r / self.r_s
+        self.physical_r_scaled = self.physical_r_scaled.value
+        #physical_r_scaled = self.physical_r / self.r_s  # Dimensionless radius
+        #self.physical_r_scaled = physical_r_scaled.decompose().value
+        return None
+    
+    def _calc_nfwProfile(self, map_size: float = None, pixel_size: float = None, pixel_number: int = None, z: float = None, z_source: float = None, cluster_mass: float = None, delta: float = None, ref_dens: float = None, rho_type: str = None) -> None:
+        if any([map_size, pixel_size, pixel_number, z, z_source, cluster_mass, delta, ref_dens, rho_type]) or (not self.physical_r_scaled):
+            self._calc_pyhsical_dist(map_size, pixel_size, pixel_number, z, z_source, cluster_mass, delta, ref_dens, rho_type)
+        proj = np.zeros(self.physical_r_scaled.shape)
+        proj[np.where(self.physical_r_scaled > 1.0)] = (1. / (self.physical_r_scaled[np.where(self.physical_r_scaled > 1.0)]**2. - 1)) * \
+                      (1. - (2. / np.sqrt(self.physical_r_scaled[np.where(self.physical_r_scaled > 1.0)]**2. - 1.)) * 
+                       np.arctan(np.sqrt((self.physical_r_scaled[np.where(self.physical_r_scaled > 1.0)] - 1.) / (self.physical_r_scaled[np.where(self.physical_r_scaled > 1.0)] + 1.))))
+        proj[np.where((self.physical_r_scaled >= self.physical_r_scaledMin) & (self.physical_r_scaled < 1.0))] = (1. / (self.physical_r_scaled[np.where((self.physical_r_scaled >= self.physical_r_scaledMin) & (self.physical_r_scaled < 1.0))]**2. - 1)) * \
+                           (1. - (2. / np.sqrt(1. - self.physical_r_scaled[np.where((self.physical_r_scaled >= self.physical_r_scaledMin) & (self.physical_r_scaled < 1.0))]**2.)) * 
+                            np.arctanh(np.sqrt((1. - self.physical_r_scaled[np.where((self.physical_r_scaled >= self.physical_r_scaledMin) & (self.physical_r_scaled < 1.0))]) / (self.physical_r_scaled[np.where((self.physical_r_scaled >= self.physical_r_scaledMin) & (self.physical_r_scaled < 1.0))] + 1.))))
+        self.center_sing_extension = np.where((self.physical_r_scaled < self.physical_r_scaledMin) & (self.physical_r_scaled < 1.0))
+        if len(self.center_sing_extension[0]) > 0:
+            physical_r_small = self.physical_r_scaled[self.center_sing_extension]
+            proj[self.center_sing_extension] = 1./3. + (2./15.) * physical_r_small**2
+        analytic_limit = np.where(np.abs(self.physical_r_scaled - 1.0) < 1.0e-5)
+        proj[analytic_limit] = 1. / 3.
+        self.proj = proj
+        return None
+    
+    def proj_surf_density(self, map_size: float = None, pixel_size: float = None, pixel_number: int = None, z: float = None, z_source: float = None, cluster_mass: float = None, delta: float = None, ref_dens: float = None, rho_type: str = None) -> None:
+        #if any([map_size, pixel_size, pixel_number, z, z_source, cluster_mass, delta, ref_dens, rho_type]) or (not self.proj.any()) or (not self.nfwConcentration):
+        self._calc_nfwProfile(map_size, pixel_size, pixel_number, z, z_source, cluster_mass, delta, ref_dens, rho_type)
+        self._calc_nfwScaleRadius(cluster_mass, delta, ref_dens, rho_type, z)
+        self._calc_nfwConcentration(cluster_mass, delta, ref_dens, rho_type, z)
+        self._calc_ref_density(rho_type, z)
+        self.sigma = ((2. * self.r_s * self.nfwConcentration * self.rho_c_z) * self.proj).to('M_sun/Mpc2')
+        return None
+    
+    def kappa(self, map_size: float = None, pixel_size: float = None, pixel_number: int = None, z: float = None, z_source: float = None, cluster_mass: float = None, delta: float = None, ref_dens: float = None, rho_type: str = None) -> None:
+        #if any([map_size, pixel_size, pixel_number, z, z_source, cluster_mass, delta, ref_dens, rho_type]) or (not self.sigma):
+        self._calc_crit_surface_density(z, z_source)
+        self.proj_surf_density(map_size, pixel_size, pixel_number, z, z_source, cluster_mass, delta, ref_dens, rho_type)
+        self.Kappa = (self.sigma / self.sigma_c).value
+        return None
+    
+    def _make_multipole_magnitude_2d(self, map_size: float = None, pixel_size: float = None):
+        if map_size:
+            self.map_size = map_size
+        if pixel_size:
+            self.pixel_size = pixel_size
+        self.pixel_number = int(self.map_size/self.pixel_size)
+        # Convert to radians for Fourier space
+        dx_rad, dy_rad = (np.pi/180)*(self.pixel_size/60.), (np.pi/180)*(self.pixel_size/60.)
+        x, y = np.fft.fftfreq(self.pixel_number, dx_rad), np.fft.fftfreq(self.pixel_number, dy_rad)
+        # Convert to angular frequency (2π factor)
+        x, y = 2*np.pi*x, 2*np.pi*y
+        self.lX, self.lY = np.meshgrid(x, y)
+        self.l2d = np.sqrt(self.lX**2 + self.lY**2)
+        self.l2d_check = True
+        return None
+    
+    def kappa2alpha(self) -> None:
+        if not self.l2d_check:
+            self._make_multipole_magnitude_2d()
+        kappa_fft = np.fft.fft2(self.Kappa)
+        phi_fft = -2. * kappa_fft / (self.l2d**2 + + 1e-30)
+
+        # Deflection angle: α̃ = -i ℓ φ̃ (gradient in Fourier space)
+        self.alphaX_fft = -1j * self.lX * phi_fft
+        self.alphaY_fft = -1j * self.lY * phi_fft
+        
+        # Handle division by zero at ℓ=0
+        self.alphaX_fft[np.isnan(self.alphaX_fft)] = 0
+        self.alphaY_fft[np.isnan(self.alphaY_fft)] = 0
+        
+        # Inverse FFT to get real-space deflection angles
+        # Convert from radians to arcmin
+        self.alphaX = np.degrees(np.fft.ifft2(self.alphaX_fft).real) * 60
+        self.alphaY = np.degrees(np.fft.ifft2(self.alphaY_fft).real) * 60
+        return None
+
+    def _calc_hubble_parameter_factor(self, omega_m: float = None, omega_l: float = None, z: float = None) -> float:
+        if omega_m:
+            self.omega_m = omega_m
+            print("omega_m changed to: " + str(omega_m))
+        if omega_l:
+            self.omega_l = omega_l
+            print("omega_l changed to: " + str(omega_l))
+        if z:
+            self.z = z
+            print("redshift z changed to: " + str(z))
+        self.hubble_parameter_factor = 1/np.sqrt((1+self.z) * self.omega_m + (1+self.z)**4 * self.omega_l)
+        #print("Hubble parameter factor is set to: " + str(self.hubble_parameter_factor))
+        return self.hubble_parameter_factor
+
+    def _calc_hubble_parameter(self, h_zero: float = None, omega_m: float = None, omega_l: float = None, z: float = None) -> float:
+        if h_zero:
+            self.h_zero = h_zero/100
+            print("h_zero changed to: " + str(h_zero))
+        if any([omega_m, omega_l, z]):
+            self._calc_hubble_parameter_factor(omega_m, omega_l, z)
+
+        self.hubble_parameter = np.sqrt(self.h_zero**2 * self.hubble_parameter_factor)
+        print("hubble parameter = " + str(self.hubble_parameter))
+        return self.hubble_parameter
+
+
 class lens_profile():
     """ 
         class is mostly reused/cleaned code from Awais Mirza 2019 at Argelander Institut Bonn
@@ -215,9 +588,8 @@ class lens_profile():
         lens is presumed to be NFW
     """
 
-    ## TODO: Decide on wether positions should be in angular position (2d) or in radial distance from the center (radial symmetry)
 
-    def __init__(self, cluster_mass = 5e14, cluster_redshift = 0.7, r_max = 10, hubble_constant = 67.74, cosmology = "planck18", omega_m = 0.3089, omega_l = 0.6911, grav_constant = 4.30091 * 10**(-3) / (10**(6)), speed_of_light = scipy.constants.speed_of_light):
+    def __init__(self, extent = 3, n = 100, cluster_mass = 5e14, cluster_redshift = 0.7, r_max = 10, hubble_constant = 67.74, cosmology = "planck18", omega_m = 0.3089, omega_l = 0.6911, grav_constant = 4.30091 * 10**(-3) / (10**(6)), speed_of_light = scipy.constants.speed_of_light):
         ## cluster parameters
         self.M = cluster_mass  ## in M_sun
         self.z = cluster_redshift
@@ -246,9 +618,10 @@ class lens_profile():
         #self.r_min = 0.1 ## not usually changed
         self.rSpace = None
 
-        self.n = 100
+        self.n = n
 
         self.pos_map = None
+        self.theta_max = extent
         ## output
         self.M_nfw = None
         self.rhoLens = None
@@ -288,14 +661,18 @@ class lens_profile():
         """       
             so far exclusively squared maps centered at zero
         """
+        self.theta_max = theta_max
         self.n = int(n)
 
-        dec = np.linspace(-theta_max, theta_max, int(n))
-        asc = np.linspace(theta_max, -theta_max, int(n))
+        dec = np.linspace(-theta_max, theta_max, int(n))    #[arcmin]
+        ra = np.linspace(theta_max, -theta_max, int(n))     #[arcmin]
 
-        pos_map = np.meshgrid(dec, asc)
+
+        pos_map = np.meshgrid(dec, ra) # [arcmin]
+
         self.pos_map = np.array(pos_map)
         print('pos map set!')
+        print("##############################################")
         return self.pos_map
 
     def set_rSpace(self) -> None:  ### naming dist_map
@@ -524,8 +901,8 @@ class lens_profile():
         theta = self.rSpace/self.comoving_dist
         #d_theta = 0.54 * (self.v_max)**2 * (self.comoving_dist - self._calc_comoving_dist(z=1100.0)) * (self._calc_f(angles=theta) / self._calc_comoving_dist(z = 1100.0))
         self.d_theta = 0.54 * (self.v_max)**2 * (self.comoving_dist - self._calc_comoving_dist(z=1100.0)) * (self.f / self._calc_comoving_dist(z = 1100.0))
+        print("##############################################")
         print("angular displacement calculated!")
-        print("Done!")
         return None
     
     def plot_d_theta(self) -> None:
@@ -540,3 +917,18 @@ class lens_profile():
         cbar = plt.colorbar(im)
         cbar.set_label("T [K]")   # label for the scale
         return None
+    
+    def lensing_map(self) -> list[list[float]]:
+        x = np.linspace(-self.theta_max/2, self.theta_max/2, self.n)
+        y = np.linspace(-self.theta_max/2, self.theta_max/2, self.n)
+        x_mesh, y_mesh = np.meshgrid(x, y)
+
+
+        theta = np.sqrt(x_mesh**2 + y_mesh**2)
+
+        d_theta_x = -self.d_theta * x_mesh/theta
+        d_theta_y = -self.d_theta * y_mesh/theta
+        print("##############################################")
+        print("Map of lensing angles created!")
+        print("##############################################" + "\n" + "Done!")
+        return d_theta_x, d_theta_y

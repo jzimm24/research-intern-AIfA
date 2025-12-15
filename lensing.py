@@ -110,6 +110,8 @@ class lensing():
         self._make_pos_map(shift_dec, shift_asc)
         dec_pos, asc_pos = self.pos_map
         post_lensing_dec_pos, post_lensing_asc_pos = dec_pos + self.lensing_map[0], asc_pos + self.lensing_map[1]
+        #interpolate = scipy.interpolate.RectBivariateSpline(asc_pos[:,0], dec_pos[0,:], self.pre_lens_map, kx = self.l_total, ky = self.l_total)
+        #interpolate = scipy.interpolate.RectBivariateSpline(dec_pos[:,0], asc_pos[0,:], self.pre_lens_map, kx = self.l_total, ky = self.l_total)
         interpolate = scipy.interpolate.RectBivariateSpline(asc_pos[:,0], dec_pos[0,:], self.pre_lens_map, kx = self.l_total, ky = self.l_total)
         self.post_lensing_map  = interpolate.ev(post_lensing_asc_pos.flatten(), post_lensing_dec_pos.flatten()).reshape([len(asc_pos), len(dec_pos)]) 
 
