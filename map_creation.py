@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy
 
+from scipy.interpolate import interp1d
+
 import colossus
 
 ### TODO: Might be improved if imports take to long
@@ -93,19 +95,40 @@ class map_maker():
                   + "Number of Pixel: " + str(self.pixel_number))
             return True
 
-    def make_map_coordinates(self, map_size = None, pixel_size = None, pixel_number = None):
+    # def make_map_coordinates(self, map_size = None, pixel_size = None, pixel_number = None):
         
-        if any((map_size, pixel_size, pixel_number)) or self.pixel_number is None:
-            self.set_map_variables(map_size, pixel_size, pixel_number)
-        x = np.linspace(-0.5*self.map_size, 0.5*self.map_size, int(self.pixel_number))
-        y = np.linspace(-0.5*self.map_size, 0.5*self.map_size, int(self.pixel_number))
-        X, Y = np.meshgrid(x, y, sparse=True)           ## TODO: check if sparse works correctly
-        self.R = np.sqrt(X**2 + Y**2)
-        self.R_check = True
-        print("coordinates made.")
+    #     if any((map_size, pixel_size, pixel_number)) or self.pixel_number is None:
+    #         self.set_map_variables(map_size, pixel_size, pixel_number)
+    #     x = np.linspace(-0.5*self.map_size, 0.5*self.map_size, int(self.pixel_number))
+    #     y = np.linspace(-0.5*self.map_size, 0.5*self.map_size, int(self.pixel_number))
+    #     X, Y = np.meshgrid(x, y, sparse=True)           ## TODO: check if sparse works correctly
+    #     self.R = np.sqrt(X**2 + Y**2)
+    #     self.R_check = True
+    #     print("coordinates made.")
+    #     self.X = X
+    #     self.Y = Y
+
+    #     return None
+
+    def make_map_coordinates(self, pixel_size: float = None, pixel_number: int = None) -> None:
+        if pixel_number:
+            self.pixel_number = pixel_number
+        if pixel_size:
+            self.pixel_size = pixel_size
+        if self.pixel_number is None or self.pixel_size is None:
+            raise ValueError("pixel_number and pixel_size must be set")
+
+        # integer-centered coordinates
+        x, y = (np.arange(self.pixel_number) - self.pixel_number // 2) * self.pixel_size, (np.arange(self.pixel_number) - self.pixel_number // 2) * self.pixel_size
+
+        X, Y = np.meshgrid(x, y, indexing="xy")
+
         self.X = X
         self.Y = Y
+        self.R = np.sqrt(X**2 + Y**2)
 
+        self.R_check = True
+        print("Real-space coordinates made (FFT-safe).")
         return None
     
     def make_fourier_map_coordinates(self) -> None:
@@ -125,12 +148,13 @@ class map_maker():
     def _normalize_coordinates(self, X: list[float] = None, Y: list[float] = None, Fourier=False) -> None:
         
         if Fourier:
-            self.X_fs_scaled = self.X/(max(self.X)-min(self.X))
-            self.Y_fs_scaled = self.Y/(max(self.Y)-min(self.Y))
+            self.X_fs_scaled = self.X/(np.max(self.X)-np.min(self.X))
+            self.Y_fs_scaled = self.Y/(np.max(self.Y)-np.min(self.Y))
             self.R_fs_scaled = np.sqrt(self.X_fs_scaled**2 + self.Y_fs_scaled**2)
         else:
-            self.X_scaled = self.X/(max(self.X[0])-min(self.X[0]))*2
-            self.Y_scaled = self.Y/(max(self.Y)-min(self.Y))*2
+            #self.X_scaled = self.X/(np.max(self.X[0])-np.min(self.X[0]))*2
+            self.X_scaled = self.X/(np.max(self.X)-np.min(self.X))*2
+            self.Y_scaled = self.Y/(np.max(self.Y)-np.min(self.Y))*2
             self.R_scaled = np.sqrt(self.X_scaled**2 + self.Y_scaled**2)
         print("Normalized Coordinates set.")
         return None
@@ -221,14 +245,25 @@ class map_maker():
 
         multipole_field = self.R_scaled * np.pi / self.fs_scale_factor
 
-        spectrum_map_complete = np.zeros(int(multipole_field.max())+1)
-        spectrum_map_complete[0:self.spectrum.size] = self.spectrum
+        #spectrum_map_complete = np.zeros(int(multipole_field.max())+1)
+        #spectrum_map_complete[0:self.spectrum.size] = self.spectrum
 
         # if self.R_fs is None:
         #     raise missing_variable_error("R_fs")
 
-        spectrum_map_confined = spectrum_map_complete[multipole_field.astype(int)]
-        self.spectrum_map_complete = spectrum_map_complete
+        #spectrum_map_confined = spectrum_map_complete[multipole_field.astype(int)]
+        spectrum_interp = interp1d(
+        np.arange(len(self.spectrum)),  # l values
+        self.spectrum,                  # C_l values
+        kind='linear',                  # linear interpolation
+        bounds_error=False,             # allow extrapolation
+        fill_value=0                    # values outside get zero
+        )
+
+        # Evaluate the spectrum at each point in Fourier space
+        spectrum_map_confined = spectrum_interp(multipole_field)
+        
+        #self.spectrum_map_complete = spectrum_map_complete
         self.spectrum_map_confined = spectrum_map_confined
         return None
 
@@ -250,10 +285,21 @@ class map_maker():
 
         self.grf_fs = np.sqrt(self.spectrum_map_confined)*self.random_noise_2d_fs              ## gaussian-random-field in Fourier-Space
 
-        self.grf = np.fft.ifft2(np.fft.fftshift(self.grf_fs)) / self.fs_scale_factor      ## gaussian-random-field after inverse fft2
+        # enforce Hermitian symmetry explicitly
+        N = int(self.pixel_number)
+        for i in range(N):
+            for j in range(N):
+                ii = (-i) % N
+                jj = (-j) % N
+                self.grf_fs[ii, jj] = np.conj(self.grf_fs[i, j])
+
+        #self.grf = np.fft.ifft2(np.fft.fftshift(self.grf_fs)) / self.fs_scale_factor      ## gaussian-random-field after inverse fft2
+        self.grf = np.fft.ifft2(np.fft.ifftshift(self.grf_fs)) / self.fs_scale_factor
+        #self.grf = np.fft.ifft2(self.grf_fs) / self.fs_scale_factor
 
         #self.grf_real = np.real(np.fft.ifft2(np.fft.fftshift(self.grf_fs))) / self.fs_scale_factor
         self.grf_real = np.real(np.fft.ifft2(np.fft.ifftshift(self.grf_fs))) / self.fs_scale_factor
+        #self.grf_real = np.real(np.fft.ifft2(self.grf_fs)) / self.fs_scale_factor
         
         return self.grf_fs, self.grf, self.grf_real
     
@@ -378,6 +424,27 @@ class nfw_lens():
                                dec=self.Y_deg * u.degree)
         
         return None
+    
+    # def make_map(self, pixel_size: float = None, pixel_number: int = None) -> None:
+    #     if pixel_number:
+    #         self.pixel_number = pixel_number
+    #     if pixel_size:
+    #         self.pixel_size = pixel_size
+    #     if self.pixel_number is None or self.pixel_size is None:
+    #         raise ValueError("pixel_number and pixel_size must be set")
+
+    #     # integer-centered coordinates
+    #     x, y, = (np.arange(self.pixel_number) - self.pixel_number // 2) * self.pixel_size
+
+    #     X, Y = np.meshgrid(x, y, indexing="xy")
+
+    #     self.X = X
+    #     self.Y = Y
+    #     self.R = np.sqrt(X**2 + Y**2)
+
+    #     self.R_check = True
+    #     print("Real-space coordinates made (FFT-safe).")
+    #     return None
     
     def _calc_angular_seperation(self, map_size: float = None, pixel_size: float = None, pixel_number: int = None) -> None:
         if map_size or pixel_size or pixel_number:
@@ -640,7 +707,7 @@ class lens_profile():
         
         self._calc_hubble_parameter_factor()
 
-        self.set_angle_map(3, self.n)
+        self.set_angle_map(extent, int(self.n))
 
         self._calc_comoving_dist()
         self.set_rSpace()
@@ -657,7 +724,7 @@ class lens_profile():
         self.r_min = r_min
         return None
 
-    def set_angle_map(self, theta_max: float, n: float):
+    def set_angle_map(self, theta_max: float, n: int):
         """       
             so far exclusively squared maps centered at zero
         """
@@ -901,21 +968,20 @@ class lens_profile():
         theta = self.rSpace/self.comoving_dist
         #d_theta = 0.54 * (self.v_max)**2 * (self.comoving_dist - self._calc_comoving_dist(z=1100.0)) * (self._calc_f(angles=theta) / self._calc_comoving_dist(z = 1100.0))
         self.d_theta = 0.54 * (self.v_max)**2 * (self.comoving_dist - self._calc_comoving_dist(z=1100.0)) * (self.f / self._calc_comoving_dist(z = 1100.0))
-        print("##############################################")
         print("angular displacement calculated!")
         return None
     
     def plot_d_theta(self) -> None:
         if not self.d_theta.any():
             raise missing_internal_variable_error("d_theta")
-        im = plt.imshow(self.d_theta, origin='lower', interpolation='bilinear', cmap='RdBu')
+        im = plt.imshow(-1*self.d_theta * 1e7, origin='lower', extent=[0, self.theta_max, 0, self.theta_max], interpolation='bilinear', cmap='RdBu')
         im.set_clim()
 
         plt.xlabel(r"$\Delta\theta_x$[arcmin]")
         plt.ylabel(r"$\Delta\theta_y$[arcmin]")
 
         cbar = plt.colorbar(im)
-        cbar.set_label("T [K]")   # label for the scale
+        cbar.set_label(r"$\alpha$ [arcmin]")   # label for the scale
         return None
     
     def lensing_map(self) -> list[list[float]]:
@@ -926,8 +992,8 @@ class lens_profile():
 
         theta = np.sqrt(x_mesh**2 + y_mesh**2)
 
-        d_theta_x = -self.d_theta * x_mesh/theta
-        d_theta_y = -self.d_theta * y_mesh/theta
+        d_theta_x = (-self.d_theta * x_mesh/theta) * 1e6
+        d_theta_y = (-self.d_theta * y_mesh/theta) * 1e6
         print("##############################################")
         print("Map of lensing angles created!")
         print("##############################################" + "\n" + "Done!")
