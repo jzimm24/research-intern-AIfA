@@ -46,7 +46,6 @@ The class computes the post-lensing map by pushing the value from the pre-lensin
 Example use:
 
 output = lensing(pre_lens_map=background_map_real, lens = alpha2)
-output.lensing_map = alpha2
 
 output.copy_map_parameters()
 output._make_pos_map()

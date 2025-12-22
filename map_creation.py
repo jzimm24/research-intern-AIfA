@@ -40,6 +40,16 @@ class missing_spectrum_type_error(Exception):
 # -----------------------------------------------------------------------------------------------------------------------------------------------------
 
 class map_maker():
+    """
+    This class produces maps of the Cosmic Microwave Background. The map parameters (map size, pixel number and pixel size) can 
+    be set, as well as the spectrum type and spectrum parameters depending on the spectrum type (for accurrate CMB maps 
+    take spectrum_type="acoustic"). Additionally the amount of multipoles in Fourier space (l_degrees) should be set. Currently only
+    squared map types are supported. The class outputs the created gaussian random field (CMB) in both real- and Fourier-space as well as its RMS.
+
+    Example use:
+    map = map_maker(map_size=100, pixel_size=0.2, l_degrees=6000)
+    """
+
     def __init__(self, map_size: int = None, pixel_size: float = None, pixel_number: int = None, l_degrees: int = None, const: float = 1, index: float = -1, spectrum_type: str = "power law"):
         ## external variables
         self.map_size = map_size
@@ -76,7 +86,17 @@ class map_maker():
         self.grf = None
         self.rms = None
 
-    def set_map_variables(self, map_size = None, pixel_size = None, pixel_number = None) -> bool:
+    def set_map_variables(self, map_size: float = None, pixel_size: float = None, pixel_number: int = None) -> bool: ## TODO differentiate between map_size_dec and map_size_ra
+        """
+        Method set/overwrites map variables for creating the underlying grit (pos. information). Currently map_size sets the
+        extent for both dimensions. Therfore only squared maps are supported.
+        Input:
+            - map_size (float):     extent of the map in arcmin in both dimensions (dec and ra.
+            - pixel_size(float):    distance in arcmin (angular) that each pixel represents. Pixel have to represent the same distance in both dim. 
+            - pixel_number(int):    number of pixels in both dimensions. The pixel number has to be an even number and has to fulfill map_size/pixel_size
+        Return:
+            - None
+        """
         if map_size is not None:
             self.map_size = map_size
         if pixel_size is not None:
@@ -111,6 +131,15 @@ class map_maker():
     #     return None
 
     def make_map_coordinates(self, pixel_size: float = None, pixel_number: int = None) -> None:
+        """
+        Method builds the grid used for the random gaussian field (mostly CMB). Input are used, otherwise existing class variables are use.
+        Input:
+            - map_size (float):     extent of the map in arcmin in both dimensions (dec and ra.
+            - pixel_size(float):    distance in arcmin (angular) that each pixel represents. Pixel have to represent the same distance in both dim. 
+            - pixel_number(int):    number of pixels in both dimensions. The pixel number has to be an even number and has to fulfill map_size/pixel_size
+        Return:
+            - None
+        """
         if pixel_number:
             self.pixel_number = pixel_number
         if pixel_size:
@@ -132,6 +161,9 @@ class map_maker():
         return None
     
     def make_fourier_map_coordinates(self) -> None:
+        """
+         
+        """
         self._compute_fourierSpace_scaler()
         #pixel_size_fs = (np.pi/180)*(self.pixel_size/60.)
         #x_fs = 2*np.pi(np.fft.fftfreq(self.pixel_number, pixel_size_fs))

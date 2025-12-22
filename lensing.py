@@ -4,11 +4,19 @@ import scipy
 
 class lensing():
     """
-    This class produces maps of the Cosmic Microwave Background. The map parameters (map size, pixel number and pixel size) can 
-    be set, as well as the spectrum type and spectrum parameters depending on the spectrum type (for accurrate CMB maps 
-    take spectrum_type="acoustic"). Additionally the amount of multipoles in Fourier space (l_degrees) should be set. Currently only
-    squared map types are supported. The class outputs the created gaussian random field (CMB) in both real- and Fourier-space as well as its RMS.
+    lensing class:
+
+    Class for producing a post lensing map given a scalar map (CMB) and a deflection angle map matching in map parameters.
+    The map parameters can be passed at initialization (should match parameters of both other maps) or be copied from the pre-lensing map.
+    The class computes the post-lensing map by pushing the value from the pre-lensing map at each position by the values given by the deflection angle map at this position.
+
+    Example use:
+    output = lensing(pre_lens_map=background_map_real, lens = alpha2)
+    output.copy_map_parameters()
+    output._make_pos_map()
+    output.apply_lensing()
     """
+
     def __init__(self, map_size: float = None, pixel_size: float = None, pixel_number: int = None, dec_shift = 0, asc_shift = 0, lens: list[list[float]] = None, pre_lens_map: list[list[float]] = None, poly_degree = 2):
         self.map_size = map_size
         self.pixel_size = pixel_size
