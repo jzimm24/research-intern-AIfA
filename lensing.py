@@ -3,6 +3,12 @@ import matplotlib.pyplot as plt
 import scipy
 
 class lensing():
+    """
+    This class produces maps of the Cosmic Microwave Background. The map parameters (map size, pixel number and pixel size) can 
+    be set, as well as the spectrum type and spectrum parameters depending on the spectrum type (for accurrate CMB maps 
+    take spectrum_type="acoustic"). Additionally the amount of multipoles in Fourier space (l_degrees) should be set. Currently only
+    squared map types are supported. The class outputs the created gaussian random field (CMB) in both real- and Fourier-space as well as its RMS.
+    """
     def __init__(self, map_size: float = None, pixel_size: float = None, pixel_number: int = None, dec_shift = 0, asc_shift = 0, lens: list[list[float]] = None, pre_lens_map: list[list[float]] = None, poly_degree = 2):
         self.map_size = map_size
         self.pixel_size = pixel_size
